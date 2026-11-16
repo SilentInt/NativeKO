@@ -53,7 +53,6 @@ $ADB shell "su -c '
   for f in libkoreader-monolibtic.so libluajit.so libsdcv.so libioctl.so; do
       [ -f \"\$LIBDIR/\$f\" ] && cp -a \"\$LIBDIR/\$f\" /data/local/tmp/nativeko-stage/libs/
   done
-  cp -a /data/local/tmp/t65a-native/libs/libkoreader-input.so /data/local/tmp/nativeko-stage/libs/
   cd /data/local/tmp/nativeko-stage && /system/bin/busybox tar cf /data/local/tmp/nativeko-stage.tar ko libs
   chmod 644 /data/local/tmp/nativeko-stage.tar
 '"
@@ -71,6 +70,19 @@ rm -rf "$STAGE/ko/libs"
 mkdir -p "$STAGE/ko/libs"
 mv "$STAGE/libs"/* "$STAGE/ko/libs/"
 rmdir "$STAGE/libs"
+
+# The Android monolibtic does not contain the Linux evdev input module; the
+# native backend loads it as libs/libkoreader-input.so.  It must be built once
+# with platform/t65a/build-input.sh (see that script's header for the LuaJIT
+# headers/libluajit prerequisites).  Do not silently produce an APK without
+# it: KOReader would exit at startup.
+INPUT_LIB="$ROOT/platform/t65a/libkoreader-input.so"
+if [ ! -f "$INPUT_LIB" ]; then
+    echo "missing $INPUT_LIB" >&2
+    echo "build it with platform/t65a/build-input.sh first" >&2
+    exit 1
+fi
+cp -f "$INPUT_LIB" "$STAGE/ko/libs/libkoreader-input.so"
 find "$STAGE/ko" -name "*.native-bak" -delete 2>/dev/null || true
 
 # Overlay the repository's current T65A code (the pulled module already has

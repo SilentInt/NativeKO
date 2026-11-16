@@ -33,6 +33,7 @@ platform/t65a/               bionic launcher and T65A dev harness
 frontend/device.lua          KOReader device probe
 frontend/device/native/      profile-driven KOReader device backend
 base/ffi/                    i.MX6 EPDC fb overlays
+base/input/                  Linux evdev input module source
 datastorage.lua              KO_DATA_DIR (/sdcard/koreader) support
 COPYING                      AGPL-3.0
 ```
@@ -58,6 +59,11 @@ Requirements:
 ADB=/mnt/c/tools/android-sdk/platform-tools/adb.exe \
   bash platform/android/nativeko/build.sh
 ```
+
+The Android monolibtic does not include KOReader's Linux evdev input module;
+`platform/t65a/libkoreader-input.so` is built once with
+`platform/t65a/build-input.sh` and included in `ko/libs/`.  The build stops
+with an error if it is missing.
 
 The output is `platform/android/nativeko/NativeKO.apk` (ignored by git).
 Bump `ASSET_VERSION` in

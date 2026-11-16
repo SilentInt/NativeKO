@@ -15,7 +15,9 @@ The generic orchestration lives in `platform/native/`:
 This directory only holds the T65A-specific dev harness:
 
 - `main.c`, `build-native.sh` — bionic LuaJIT launcher (`koreader-t65a`)
-- `build-input.sh` — Linux evdev input module for the monolibtic build
+- `build-input.sh` — builds `libkoreader-input.so`.  The Android monolibtic
+  does not contain the Linux evdev input module, so the APK build requires
+  this prebuilt library (`platform/t65a/libkoreader-input.so`).
 - `run-native.sh`, `restore-android.sh` — compatibility wrappers around
   `core/session.sh`
 - `deploy-dev.sh` — builds and deploys the framework + generated profile to an

@@ -55,7 +55,10 @@ Requirements:
   `$HOME/Android/Sdk/ndk/23.2.8568313`);
 - root adb access to the device;
 - the original KOReader module installed as `org.koreader.launcher` on the
-  device (the build pulls the module from there).
+  device (the build pulls the module from there);
+- `platform/t65a/libkoreader-input.so`, built by `platform/t65a/build-input.sh`.
+  The Android monolibtic does not include the Linux evdev input module; the
+  build stops with a clear error if this file is missing.
 
 ```sh
 ADB=/mnt/c/tools/android-sdk/platform-tools/adb.exe \
