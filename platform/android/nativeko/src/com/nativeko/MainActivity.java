@@ -21,7 +21,7 @@ import java.util.zip.ZipInputStream;
 
 /**
  * NativeKO: one-tap launcher for the native (framebuffer/evdev) KOReader
- * build on the Boyue Likebook T65A.
+ * build.
  *
  * The APK embeds the complete KOReader Lua module, the native libraries and
  * the launcher scripts. On first start they are extracted into the app's
@@ -34,7 +34,7 @@ public class MainActivity extends Activity {
     private static final String TAG = "NativeKO";
 
     /** Bump this whenever the embedded assets change. */
-    private static final String ASSET_VERSION = "10";
+    private static final String ASSET_VERSION = "13";
 
     private TextView status;
     private final Handler handler = new Handler();
@@ -100,7 +100,7 @@ public class MainActivity extends Activity {
         }
 
         // Never start a second instance on top of a running one.
-        String ps = runSu("ps | /system/bin/busybox grep \"[k]oreader-t65a\"");
+        String ps = runSu("ps | grep \"[k]oreader-native\"");
         if (ps.trim().length() > 0) {
             setStatus("NativeKO 已经在运行。");
             return;
@@ -133,14 +133,14 @@ public class MainActivity extends Activity {
 
         // Executable bits: the app owns these files, but the native process
         // runs as root and still needs a set x bit to exec/mmap PROT_EXEC.
-        File bin = new File(nativeDir, "koreader-t65a");
+        File bin = new File(nativeDir, "koreader-native");
         if (!bin.isFile()) {
             setStatus("启动器缺失：" + bin);
             return;
         }
         bin.setExecutable(true, false);
         String[] scripts = { "run-native.sh", "restore-android.sh",
-                "session.sh", "start-session.sh" };
+                "session.sh", "start-session.sh", "detach" };
         for (String s : scripts) {
             new File(nativeDir, s).setExecutable(true, false);
         }
@@ -154,11 +154,27 @@ public class MainActivity extends Activity {
         }
 
         setStatus("正在启动 Native KOReader…");
+        // The build script writes the device profile id next to the scripts;
+        // run-native.sh reads KO_NATIVE_PROFILE_ID so the same launcher works
+        // for any packaged profile.
+        String profileId = readText(new File(nativeDir, "profile.id"));
+        if (profileId == null || profileId.trim().length() == 0) {
+            profileId = "notesl";
+        }
+        profileId = profileId.trim();
+        File detach = new File(nativeDir, "detach");
+        detach.setExecutable(true, false);
+        String launcher = detach.isFile()
+                ? "'" + detach.getAbsolutePath() + "' sh '"
+                    + nativeDir.getAbsolutePath() + "/run-native.sh'"
+                : "setsid sh '" + nativeDir.getAbsolutePath()
+                    + "/run-native.sh' &";
         String cmd = "cd '" + koDir.getAbsolutePath() + "' && "
                 + "KO_HOME='" + koDir.getAbsolutePath() + "' "
                 + "KO_NATIVE_DIR='" + nativeDir.getAbsolutePath() + "' "
-                + "/system/bin/busybox setsid sh '" + nativeDir.getAbsolutePath() + "/run-native.sh' "
-                + "> '" + nativeDir.getAbsolutePath() + "/run.log' 2>&1 < /dev/null &";
+                + "KO_NATIVE_PROFILE_ID='" + profileId + "' "
+                + launcher
+                + " > '" + nativeDir.getAbsolutePath() + "/run.log' 2>&1 < /dev/null";
         String out = runSu(cmd);
         if (out.contains("ERROR")) {
             setStatus("启动失败：\n" + out);

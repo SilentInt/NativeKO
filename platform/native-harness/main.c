@@ -1,12 +1,12 @@
 /*
- * Native (no Android framework) KOReader launcher for the Boyue Likebook T65A.
+ * Native (no Android framework) KOReader launcher.
  *
  * This is a plain bionic executable: it does NOT create an Activity, a
  * SurfaceView, or use SurfaceFlinger. It just opens the LuaJIT shared library,
- * chdir()s into the KOReader module, and runs reader.lua. The T65A device
- * backend then drives /dev/fb0 (imx_epdc_fb) and /dev/input/event* directly.
+ * chdir()s into the KOReader module, and runs reader.lua. The device backend
+ * then drives the framebuffer and /dev/input/event* directly.
  *
- * Build with platform/t65a/build-native.sh (NDK, armeabi-v7a, API 19).
+ * Build with platform/native-harness/build-native.sh (NDK, armeabi-v7a, API 19).
  * Run as root (see run-native.sh): the framebuffer and evdev nodes are
  * root/input-only, and SurfaceFlinger/zygote must be stopped first.
  */
@@ -29,7 +29,7 @@ typedef void       (*lua_close_fn)(lua_State *);
 static void *must_sym(void *handle, const char *name) {
     void *sym = dlsym(handle, name);
     if (!sym) {
-        fprintf(stderr, "koreader-t65a: missing LuaJIT symbol %s: %s\n", name, dlerror());
+        fprintf(stderr, "koreader-native: missing LuaJIT symbol %s: %s\n", name, dlerror());
         exit(1);
     }
     return sym;
@@ -38,7 +38,7 @@ static void *must_sym(void *handle, const char *name) {
 static void report_error(lua_State *L, lua_tolstring_fn tolstring, const char *what) {
     size_t len = 0;
     const char *msg = tolstring(L, -1, &len);
-    fprintf(stderr, "koreader-t65a: %s: %.*s\n", what, (int)len, msg ? msg : "(no message)");
+    fprintf(stderr, "koreader-native: %s: %.*s\n", what, (int)len, msg ? msg : "(no message)");
 }
 
 int main(int argc, char **argv) {
@@ -47,13 +47,13 @@ int main(int argc, char **argv) {
         home = ".";
     }
     if (chdir(home) != 0) {
-        perror("koreader-t65a: chdir");
+        perror("koreader-native: chdir");
         return 1;
     }
 
     void *lib = dlopen("libluajit.so", RTLD_NOW | RTLD_GLOBAL);
     if (!lib) {
-        fprintf(stderr, "koreader-t65a: dlopen libluajit.so failed: %s\n", dlerror());
+        fprintf(stderr, "koreader-native: dlopen libluajit.so failed: %s\n", dlerror());
         return 1;
     }
 
@@ -67,7 +67,7 @@ int main(int argc, char **argv) {
 
     lua_State *L = luaL_newstate();
     if (!L) {
-        fprintf(stderr, "koreader-t65a: luaL_newstate failed\n");
+        fprintf(stderr, "koreader-native: luaL_newstate failed\n");
         return 1;
     }
     luaL_openlibs(L);

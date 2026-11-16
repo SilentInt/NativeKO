@@ -17,6 +17,25 @@ end
 
 local WpaClient = {__index = {}}
 
+-- Android's wpa_supplicant init services expose a single global control
+-- socket (-g@android:wpa_wlan0).  Interface-specific commands on that socket
+-- must be prefixed with "IFNAME=<iface> ".  Native device backends can set
+-- WpaClient.ifname before creating clients (left nil for per-interface
+-- sockets, where no prefix is needed).
+WpaClient.ifname = nil
+
+local function with_ifname(cmd)
+    if not WpaClient.ifname or cmd:match("^IFNAME=") then
+        return cmd
+    end
+    -- Global commands must not be prefixed.
+    if cmd:match("^INTERFACES") or cmd:match("^ATTACH") or
+       cmd:match("^DETACH") or cmd:match("^PING") then
+        return cmd
+    end
+    return "IFNAME=" .. WpaClient.ifname .. " " .. cmd
+end
+
 function WpaClient.new(s)
     local instance = {
         wc_hdl = nil,
@@ -33,11 +52,11 @@ function WpaClient.new(s)
 end
 
 function WpaClient.__index:sendCmd(cmd, block)
-    return wpa_ctrl.command(self.wc_hdl, cmd, block)
+    return wpa_ctrl.command(self.wc_hdl, with_ifname(cmd), block)
 end
 
 function WpaClient.__index:sendCtrlCmd(cmd)
-    return wpa_ctrl.control_command(self.wc_hdl, cmd)
+    return wpa_ctrl.control_command(self.wc_hdl, with_ifname(cmd))
 end
 
 function WpaClient.__index:getInterfaces()

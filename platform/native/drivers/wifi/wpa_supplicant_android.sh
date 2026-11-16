@@ -2,8 +2,8 @@
 # wpa_supplicant + dhcpcd backend for Android-style hosts.
 #
 # Sourced by core/session.sh. profile.env provides:
-#   NET_IFACE, NET_CTRL_DIR, NET_SERVICE, NET_DHCP_SERVICE, NET_DHCP_CMD,
-#   NET_DHCP_FLAGS, NET_DRIVER_MODULE/KO/ARGS, NET_ANDROID_PROPS.
+#   NET_IFACE, NET_CTRL_DIR, NET_CTRL_INTERFACE, NET_SERVICE, NET_DHCP_SERVICE,
+#   NET_DHCP_CMD, NET_DHCP_FLAGS, NET_DRIVER_MODULE/KO/ARGS, NET_ANDROID_PROPS.
 #
 # The supplicant's init service and dhcpcd are the system's own tools; this
 # driver only sequences them and installs the routes/DNS that netd would
@@ -11,11 +11,13 @@
 
 BB="${BB:-busybox}"
 if [ -n "${NET_IFACE:-}" ]; then
-    NET_CTRL_SOCK="$NET_CTRL_DIR/$NET_IFACE"
+    # Android's init services often expose only a global supplicant socket
+    # (-g@android:wpa_wlan0), not <ctrl_dir>/<iface>.
+    NET_CTRL_SOCK="${NET_CTRL_INTERFACE:-$NET_CTRL_DIR/$NET_IFACE}"
 else
     NET_CTRL_SOCK=""
 fi
-NET_DHCP_LOG="${TMP:-${NATIVE_DIR:-/data/local/tmp/t65a-native}}/dhcpcd.log"
+NET_DHCP_LOG="${TMP:-${NATIVE_DIR:-/data/local/tmp/nativeko}}/dhcpcd.log"
 
 _net_service_state() {
     getprop "init.svc.$NET_SERVICE" 2>/dev/null
@@ -36,13 +38,45 @@ _net_has_ipv4() {
     ip -4 addr show "$NET_IFACE" 2>/dev/null | $BB grep -q "inet "
 }
 
+# Resolve the default gateway.  Prefer the dhcp.<iface>.gateway property set by
+# the ROM's dhcpcd hooks; some Android 6 builds never set it (the hooks fail or
+# are disabled), so fall back to the interface address's .1 and then the ARP
+# table.
+_net_gateway() {
+    _gw=$(getprop "dhcp.$NET_IFACE.gateway" 2>/dev/null)
+    if [ -n "$_gw" ]; then
+        echo "$_gw"
+        return 0
+    fi
+    _addr=$(ip -4 addr show "$NET_IFACE" 2>/dev/null | \
+        $BB sed -n 's/.*inet \([0-9.]*\)\/.*/\1/p' | $BB head -1)
+    if [ -n "$_addr" ]; then
+        echo "${_addr%.*}.1"
+        return 0
+    fi
+    ip neigh 2>/dev/null | \
+        $BB sed -n "s/^\([0-9.]*\) dev $NET_IFACE .*/\1/p" | $BB head -1
+}
+
+_net_dns1() {
+    _dns=$(getprop "dhcp.$NET_IFACE.dns1" 2>/dev/null)
+    if [ -n "$_dns" ]; then
+        echo "$_dns"
+    else
+        _net_gateway
+    fi
+}
+
 _net_install_routes() {
     [ "${NET_ANDROID_PROPS:-0}" = "1" ] || return 0
-    GW=$(getprop "dhcp.$NET_IFACE.gateway" 2>/dev/null)
+    GW=$(_net_gateway)
     if [ -n "$GW" ]; then
         ip route show 2>/dev/null | $BB grep -q "^default " || \
             ip route add default via "$GW" dev "$NET_IFACE" onlink 2>/dev/null
-        [ -n "$(getprop net.dns1)" ] || setprop net.dns1 "$GW"
+        if [ -z "$(getprop net.dns1)" ]; then
+            DNS1=$(_net_dns1)
+            [ -n "$DNS1" ] && setprop net.dns1 "$DNS1"
+        fi
     fi
     DNS2=$(getprop "dhcp.$NET_IFACE.dns2" 2>/dev/null)
     [ -n "$DNS2" ] && setprop net.dns2 "$DNS2"
@@ -79,7 +113,7 @@ wifi_dhcp() {
     _net_install_routes
 }
 
-WIFI_STATE_DIR="${KO_NATIVE_DIR:-/data/local/tmp/t65a-native}"
+WIFI_STATE_DIR="${KO_NATIVE_DIR:-/data/local/tmp/nativeko}"
 WIFI_SDIO_SAVED="$WIFI_STATE_DIR/wifi_sdio_unbound"
 WIFI_HOST_SAVED="$WIFI_STATE_DIR/wifi_host_unbound"
 

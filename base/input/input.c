@@ -68,6 +68,8 @@ pid_t  fake_ev_generator_pid = -1;
 #    include "input-cervantes.h"
 #elif defined(BOOKEEN)
 #    include "input-bookeen.h"
+#elif defined(NATIVE_KO)
+#    include "input-native.h"
 #elif defined(T65A)
 #    include "input-t65a.h"
 #endif

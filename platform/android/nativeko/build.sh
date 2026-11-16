@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Build NativeKO.apk: a self-contained one-tap launcher for the native
-# (framebuffer/evdev) KOReader build on the Boyue Likebook T65A.
+# (framebuffer/evdev) KOReader build.
 #
 # The APK embeds:
 #   - the complete KOReader Lua module (pulled from the installed KOReader app
 #     on the connected device, with user data stripped),
 #   - the native libraries (libluajit, libkoreader-monolibtic, libsdcv,
 #     libioctl, libkoreader-input),
-#   - the native launcher (koreader-t65a) and its shell scripts.
+#   - the native launcher (koreader-native) and its shell scripts.
+#
+# The device profile is selected with PROFILE_ID (default: notesl); the value
+# is also written to native/profile.id so the launcher does not need a
+# device-specific build-time constant.
 #
 # Requires: adb + root on the device, an Android SDK (build-tools + a
 # platform android.jar), a JDK, and a Linux (WSL) host for the zip step.
@@ -20,7 +24,11 @@ SDK="${ANDROID_SDK_ROOT:-/mnt/c/tools/android-sdk}"
 BT="${BUILD_TOOLS:-$SDK/build-tools/35.0.0}"
 ANDROID_JAR="$SDK/platforms/android-36/android.jar"
 NDK="${ANDROID_NDK_HOME:-$HOME/Android/Sdk/ndk/23.2.8568313}"
+PROFILE_ID="${PROFILE_ID:-notesl}"
 PKG=com.nativeko
+
+PROFILE_JSON="$ROOT/platform/native/profiles/$PROFILE_ID/profile.json"
+[ -f "$PROFILE_JSON" ] || { echo "missing profile $PROFILE_JSON" >&2; exit 1; }
 
 BUILD="$PROJECT/.build"
 STAGE="$BUILD/stage"
@@ -37,7 +45,7 @@ done
 [ -f "$BT/lib/d8.jar" ] || { echo "missing $BT/lib/d8.jar" >&2; exit 1; }
 
 echo "== building native launcher =="
-( cd "$ROOT/platform/t65a" && ANDROID_NDK_HOME="$NDK" ./build-native.sh )
+( cd "$ROOT/platform/native-harness" && ANDROID_NDK_HOME="$NDK" ./build-native.sh )
 
 echo "== staging KOReader module from device =="
 rm -rf "$BUILD"
@@ -53,7 +61,9 @@ $ADB shell "su -c '
   for f in libkoreader-monolibtic.so libluajit.so libsdcv.so libioctl.so; do
       [ -f \"\$LIBDIR/\$f\" ] && cp -a \"\$LIBDIR/\$f\" /data/local/tmp/nativeko-stage/libs/
   done
-  cd /data/local/tmp/nativeko-stage && /system/bin/busybox tar cf /data/local/tmp/nativeko-stage.tar ko libs
+  cd /data/local/tmp/nativeko-stage && \
+  if command -v tar >/dev/null 2>&1; then tar cf /data/local/tmp/nativeko-stage.tar ko libs; \
+  else /system/bin/busybox tar cf /data/local/tmp/nativeko-stage.tar ko libs; fi
   chmod 644 /data/local/tmp/nativeko-stage.tar
 '"
 $ADB pull /data/local/tmp/nativeko-stage.tar "$BUILD/stage.tar" >/dev/null
@@ -73,13 +83,13 @@ rmdir "$STAGE/libs"
 
 # The Android monolibtic does not contain the Linux evdev input module; the
 # native backend loads it as libs/libkoreader-input.so.  It must be built once
-# with platform/t65a/build-input.sh (see that script's header for the LuaJIT
+# with platform/native-harness/build-input.sh (see that script's header for the LuaJIT
 # headers/libluajit prerequisites).  Do not silently produce an APK without
 # it: KOReader would exit at startup.
-INPUT_LIB="$ROOT/platform/t65a/libkoreader-input.so"
+INPUT_LIB="$ROOT/platform/native-harness/libkoreader-input.so"
 if [ ! -f "$INPUT_LIB" ]; then
     echo "missing $INPUT_LIB" >&2
-    echo "build it with platform/t65a/build-input.sh first" >&2
+    echo "build it with platform/native-harness/build-input.sh first" >&2
     exit 1
 fi
 cp -f "$INPUT_LIB" "$STAGE/ko/libs/libkoreader-input.so"
@@ -93,32 +103,41 @@ cp -f "$ROOT/datastorage.lua" "$STAGE/ko/datastorage.lua"
 # Drop a legacy per-device backend left in the pulled module by old dev
 # deployments; the profile-driven backend is authoritative.
 rm -rf "$STAGE/ko/frontend/device/t65a"
-rm -rf "$STAGE/ko/frontend/device/native/suspend"
+mkdir -p "$STAGE/ko/frontend/device/native/suspend"
 cp -f "$ROOT/frontend/device/native/device.lua" "$ROOT/frontend/device/native/powerd.lua" \
       "$STAGE/ko/frontend/device/native/"
-cp -f "$ROOT/base/ffi/framebuffer_mxcfb.lua" "$ROOT/base/ffi/mxcfb_t65a_h.lua" "$STAGE/ko/ffi/"
+cp -f "$ROOT/frontend/device/native/suspend/android_wakeup_count.lua" \
+      "$STAGE/ko/frontend/device/native/suspend/"
+cp -f "$ROOT/base/ffi/framebuffer_mxcfb.lua" "$ROOT/base/ffi/mxcfb_t65a_h.lua" \
+      "$ROOT/base/ffi/framebuffer_rk_ebc.lua" \
+      "$ROOT/base/ffi/framebuffer_onyx.lua" "$STAGE/ko/ffi/"
 mkdir -p "$STAGE/ko/common/lj-wpaclient"
 cp -f "$ROOT/platform/native/common/lj-wpaclient/"*.lua "$STAGE/ko/common/lj-wpaclient/"
 
 mkdir -p "$STAGE/native"
-cp -f "$ROOT/platform/t65a/koreader-t65a" "$STAGE/native/"
+cp -f "$ROOT/platform/native-harness/koreader-native" "$STAGE/native/"
+cp -f "$ROOT/platform/native-harness/detach" "$STAGE/native/"
 for s in run-native.sh restore-android.sh; do
-    cp -f "$ROOT/platform/t65a/$s" "$STAGE/native/"
+    cp -f "$ROOT/platform/native-harness/$s" "$STAGE/native/"
 done
 
 # Generic session core, host/wifi drivers and the generated device profile.
 mkdir -p "$STAGE/native/drivers/host" "$STAGE/native/drivers/wifi" \
-         "$STAGE/native/drivers/pm" "$STAGE/native/profiles/t65a"
+         "$STAGE/native/drivers/pm" "$STAGE/native/profiles/$PROFILE_ID"
 cp -f "$ROOT/platform/native/core/session.sh" "$STAGE/native/session.sh"
 cp -f "$ROOT/platform/native/core/start-session.sh" "$STAGE/native/start-session.sh"
 cp -f "$ROOT/platform/native/drivers/host/"*.sh "$STAGE/native/drivers/host/"
 cp -f "$ROOT/platform/native/drivers/wifi/"*.sh "$STAGE/native/drivers/wifi/"
 cp -f "$ROOT/platform/native/drivers/pm/"*.sh "$STAGE/native/drivers/pm/"
-# Screensaver-only build: do not ship the hardware-suspend PM driver/acker.
+# Do not ship the legacy Android early-suspend acker; the NoteSL profile uses
+# the android_wakeup_count model instead.
 rm -f "$STAGE/native/drivers/pm/android_early_suspend.sh" \
       "$STAGE/native/drivers/pm/fb_ack.sh"
 python3 "$ROOT/platform/native/tools/profilegen.py" \
-    "$ROOT/platform/native/profiles/t65a/profile.json" "$STAGE/native/profiles/t65a"
+    "$PROFILE_JSON" "$STAGE/native/profiles/$PROFILE_ID"
+# MainActivity reads this and exports KO_NATIVE_PROFILE_ID; this keeps the
+# packaged scripts profile-agnostic.
+printf '%s\n' "$PROFILE_ID" > "$STAGE/native/profile.id"
 
 echo "== assembling assets =="
 mkdir -p "$BUILD/assets"

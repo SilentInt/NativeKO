@@ -19,7 +19,7 @@ _native_dir="${0%/*}"
 [ "$_native_dir" = "$0" ] && _native_dir="."
 NATIVE_DIR="${KO_NATIVE_DIR:-$_native_dir}"
 KO_HOME="${KO_HOME:-/data/data/org.koreader.launcher/files}"
-PROFILE_ID="${KO_NATIVE_PROFILE_ID:-t65a}"
+PROFILE_ID="${KO_NATIVE_PROFILE_ID:-notesl}"
 PROFILE_DIR=""
 ACTION="start"
 DRY_RUN=0
@@ -57,16 +57,26 @@ fi
 # shellcheck disable=SC1090
 . "$PROFILE_ENV"
 
-# BusyBox location is profile data (Android: /system/bin/busybox).
+# Helper command used for shell bits the old Android toolbox lacks.  The
+# profile supplies it (busybox on most ROMs, toybox on others); fall back to
+# whichever is actually present on this device.
 BB="${KO_BUSYBOX:-${TOOL_BUSYBOX:-}}"
-[ -n "$BB" ] || BB=busybox
+if [ -z "$BB" ]; then
+    if [ -x /system/bin/busybox ]; then
+        BB=/system/bin/busybox
+    elif [ -x /system/bin/toybox ]; then
+        BB=/system/bin/toybox
+    else
+        BB=busybox
+    fi
+fi
 
 # Make the session wake lock unique per session: the previous session's
 # trap (pm_stop) must not release a lock acquired by a newer session.
 KO_NATIVE_WAKE_LOCK="${PWR_WAKE_LOCK_NAME:-nativeko}-$$"
 export KO_NATIVE_WAKE_LOCK
 
-BIN="${KO_NATIVE_BIN:-${KO_T65A_BIN:-$NATIVE_DIR/koreader-t65a}}"
+BIN="${KO_NATIVE_BIN:-${KO_T65A_BIN:-$NATIVE_DIR/koreader-native}}"
 JOURNAL="$NATIVE_DIR/session.journal"
 GOV_SAVE="$NATIVE_DIR/original_governors"
 
@@ -153,7 +163,7 @@ if [ "$DRY_RUN" = "1" ]; then
     echo "start services: $HOST_START_SERVICES"
     echo "governor:       $HOST_GOV_NATIVE (restore $HOST_GOV_FALLBACK)"
     echo "display:        $DISP_FB pan=$DISP_PAN_VALUE blank=$DISP_BLANK"
-    echo "wifi:           $NET_BACKEND iface=$NET_IFACE ctrl=$NET_CTRL_DIR/$NET_IFACE"
+    echo "wifi:           $NET_BACKEND iface=$NET_IFACE ctrl=${NET_CTRL_INTERFACE:-$NET_CTRL_DIR/$NET_IFACE}"
     echo "wifi autostart: $NET_START_ON_BOOT"
     echo "pm model:       ${PWR_MODEL:-none}"
     echo "pm wake lock:   ${PWR_WAKE_LOCK_NAME:-none}"
@@ -173,7 +183,7 @@ set_native_governor() {
         cur=$(cat "$cpu/cpufreq/scaling_governor")
         case "$cur" in
             performance|interactive)
-                saved=$($BB grep "^$cpu " "$GOV_SAVE" 2>/dev/null | $BB awk '{print $2}')
+                saved=$($BB grep "^$cpu " "$GOV_SAVE" 2>/dev/null | $BB sed -e 's/^[^ ]* //' -e 's/ .*//')
                 [ -n "$saved" ] || saved="$HOST_GOV_FALLBACK"
                 ;;
             *) saved="$cur" ;;

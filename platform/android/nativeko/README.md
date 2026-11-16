@@ -1,12 +1,14 @@
 # NativeKO
 
-> Project architecture, achievable effects and the user guide are in the
-> [top-level README](../../../README.md).
+NativeKO is a self-contained Android APK that launches KOReader natively
+**without the Android framework**: it stops `zygote`/`SurfaceFlinger` and
+runs KOReader directly on the device's e-ink framebuffer and evdev input.
 
-NativeKO is a self-contained Android APK that launches KOReader on the
-Boyue Likebook T65A **without the Android framework**: it stops
-`zygote`/`SurfaceFlinger` and runs KOReader directly on the i.MX6 EPDC
-framebuffer and evdev input.
+The shipped reference profile is **Onyx NoteS / 超星 NoteSL** (Rockchip
+RK3288 + Rockchip EBC direct `/dev/ebc` buffer); the same APK build supports
+other devices by selecting a profile (`PROFILE_ID`), e.g. the Likebook T65A
+(i.MX6 EPDC).  RK EBC ports use the `rk_ebc` display backend and the probe /
+calibration procedure in `platform/native/RK_EBC.md`.
 
 The APK contains everything it needs:
 
@@ -14,9 +16,9 @@ The APK contains everything it needs:
   `org.koreader.launcher` module, with user data stripped),
 - the native libraries (`libluajit`, `libkoreader-monolibtic`, `libsdcv`,
   `libioctl`, `libkoreader-input`),
-- `koreader-t65a`, the bionic LuaJIT launcher,
+- `koreader-native`, the bionic LuaJIT launcher,
 - the generic native session framework (`platform/native`),
-- the generated T65A profile.
+- the generated device profile (`native/profiles/<id>` + `profile.id`).
 
 On first start (and whenever `ASSET_VERSION` changes), the assets are
 extracted into the app's private data directory.  Every start then runs
@@ -24,16 +26,16 @@ extracted into the app's private data directory.  Every start then runs
 
 ## Current behaviour
 
-NativeKO is a **screensaver-only** build.  It deliberately does not perform
-hardware suspend:
+The shipped NoteSL profile performs real hardware suspend through
+`power.model = "android_wakeup_count"` (Android 6 wakelock/wakeup_count):
 
-- pressing the power key shows the KOReader screensaver;
-- pressing the power key again closes it;
+- pressing the power key shows the KOReader screensaver and, after a short
+  delay, stops Wi-Fi and writes `mem` to `/sys/power/state`;
+- pressing the power key again wakes the device and closes the screensaver;
+  the resume path restores Wi-Fi if it was on before and forces a full repaint;
 - touch taps do **not** close the screensaver;
-- the frontlight is dimmed while the screensaver is shown and restored when
-  the screensaver is closed with the power key;
-- Wi-Fi is turned off while the screensaver is shown and, if it was on before,
-  brought back when the screensaver is closed with the power key;
+- the frontlight is dimmed while the screensaver/suspend is active and restored
+  on wake (when the profile has a frontlight node);
 - Wi-Fi is not started automatically at session start
   (`network.start_on_boot = false`); use KOReader's network menu to turn it on
   or off;
@@ -41,9 +43,13 @@ hardware suspend:
   `/system/bin/reboot -p` as root (falling back to
   `setprop sys.powerctl shutdown`).
 
-The session runs inside a wakelock/session lock-free configuration: there is
-no `mem` request, no early-suspend acknowledgement thread, no RTC watchdog and
-no session wake lock.  `power.model` is `none`.
+The session holds a `nativeko-<pid>` wake lock, releases stale framework
+locks, and releases the session lock only for the `mem` transition.  Rapid
+power presses during a suspend/resume are ignored until the transition and
+its repaint have completed.  NoteSL's unused mmc1 SD controller is unbound for
+suspend and rebound on resume; otherwise its resume timeouts add ~10 seconds.
+Profiles that keep `power.model = "none"` (e.g. T65A) remain
+screensaver-only.
 
 ## Build
 
@@ -58,27 +64,28 @@ Requirements:
   `$HOME/Android/Sdk/ndk/23.2.8568313`);
 - root adb access to the device;
 - the original KOReader module installed as `org.koreader.launcher` on the
-  device (the build pulls the module from there);
-- `platform/t65a/libkoreader-input.so`, built by `platform/t65a/build-input.sh`.
-  The Android monolibtic does not include the Linux evdev input module; the
-  build stops with a clear error if this file is missing.
+  device (the build pulls the module from there).
 
 ```sh
 ADB=/mnt/c/tools/android-sdk/platform-tools/adb.exe \
-  bash platform/android/nativeko/build.sh
+  PROFILE_ID=notesl bash platform/android/nativeko/build.sh
 ```
+
+`PROFILE_ID` defaults to `notesl`; use `PROFILE_ID=t65a` for the Likebook
+T65A build.
 
 The script:
 
-1. builds `koreader-t65a` with `platform/t65a/build-native.sh`;
+1. builds `koreader-native` with `platform/native-harness/build-native.sh`;
 2. pulls `/data/data/org.koreader.launcher/files` from the device and strips
    cache/settings/user data;
 3. overlays the authoritative repository files
    (`frontend/device.lua`, `frontend/device/native/*`, `common/lj-wpaclient`,
    `base/ffi/*`, `datastorage.lua`);
 4. stages `platform/native/{core,drivers,profiles,tools}` and generates the
-   profile;
-5. removes suspend-only files from the staged trees;
+   selected profile, plus `native/profile.id` for `MainActivity`;
+5. removes the legacy early-suspend acker from the staged trees
+   (`android_wakeup_count` and the Lua suspend driver are shipped);
 6. creates `assets/ko.zip` and `assets/native.zip`;
 7. links, dexes, aligns and signs `NativeKO.apk`.
 
@@ -100,8 +107,9 @@ After an update with a new `ASSET_VERSION`, exit the running native session
 and start NativeKO again.  The launcher re-extracts the assets and applies
 the executable bits.
 
-The build intentionally does **not** ship the suspend PM driver,
-`fb_ack.sh`, or `frontend/device/native/suspend/*`.
+The build ships `drivers/pm/android_wakeup_count.sh` and
+`frontend/device/native/suspend/android_wakeup_count.lua`.  The legacy
+`android_early_suspend`/`fb_ack` files are not shipped.
 
 ## Runtime layout
 
@@ -118,11 +126,13 @@ files/
     start-session.sh          detached launcher
     run-native.sh             compatibility wrapper -> session.sh
     restore-android.sh        wrapper -> session.sh restore
-    koreader-t65a             native launcher
+    koreader-native             native launcher
     drivers/host/             android_init, none
-    drivers/pm/               none (the only PM model shipped)
+    drivers/pm/               android_wakeup_count, none
     drivers/wifi/             wpa_supplicant_android
-    profiles/t65a/            generated profile.env + profile.lua
+    profiles/<id>/            generated profile.env + profile.lua
+    profile.id                selected profile id (read by MainActivity)
+    detach                    double-fork session detacher
     run.log                   launcher/KOReader stdout/stderr
     session.journal           present while a session owns the screen
 ```
@@ -136,10 +146,10 @@ The native `NetworkMgr` runs session actions from
 `frontend/device/native/device.lua`:
 
 ```
-sh <native>/session.sh --profile t65a wifi-up|wifi-down|wifi-dhcp|wifi-release
+sh <native>/session.sh --profile notesl wifi-up|wifi-down|wifi-dhcp|wifi-release
 ```
 
-Two details matter on Android 4.4 / this device:
+Two details matter on Android 4.4 / Android 6 ROMs:
 
 1. `session.sh` is invoked through `sh`, so it works even if the APK
    extraction did not preserve an executable bit.
@@ -150,7 +160,7 @@ Two details matter on Android 4.4 / this device:
 `network.start_on_boot = false` prevents the session core from calling
 `wifi_up` before KOReader starts.  If `wifi_was_on`/`auto_restore_wifi` are
 set in KOReader's settings, KOReader itself may still restore Wi-Fi on
-startup; the current T65A settings have `wifi_was_on = false`.
+startup; the shipped NoteSL profile has `wifi_was_on = false`.
 
 `isWifiOn()` reads `init.svc.wpa_supplicant` (`network.service_prop`), so the
 UI follows the real supplicant state.  `wifi-down` stops the supplicant,
@@ -163,26 +173,38 @@ renews DHCP.
 `frontend/device/native/device.lua`:
 
 - first power press: `Screensaver:setup()/show()`, force a repaint, turn
-  Wi-Fi off, call `PowerD:beforeSuspend()` (frontlight dim);
-- second power press: close the screensaver, restore the frontlight, and
-  restore Wi-Fi if it was on before;
+  Wi-Fi off, call `PowerD:beforeSuspend()` (frontlight dim), then schedule
+  `Device:suspend()` after `suspend_wait_timeout`;
+- `Device:suspend()` (profile PM driver) stops Wi-Fi, clears stale RTC
+  alarms, unbinds `suspend_unbind` devices, drops the session wake lock and
+  writes `mem`; the write returns on wake;
+- on wake the driver rebinds devices and re-takes the session lock; the power
+  key that woke the device closes the screensaver, restores the frontlight and
+  Wi-Fi, and forces a full repaint;
 - `ScreenSaverWidget.onTap` is replaced with a no-op, so touch cannot dismiss
   the screensaver;
-- no `rescheduleSuspend()` and no `Device:suspend()` hardware path.
+- while `_suspend_in_progress` / `_resume_in_progress` is set, new Power /
+  Suspend events are ignored; the busy state clears after the resume repaint,
+  so rapid presses cannot queue a second suspend.
 
-`canSuspend = no`; `Device:suspend()` only logs that suspend is disabled.
+`canSuspend = yes` when the profile selects a suspend model.
 `canPowerOff = yes`; `Device:powerOff()` is implemented as above.
 
 ## Troubleshooting
 
 - **Wi-Fi turns on by itself**: check
-  `native/profiles/t65a/profile.env` (`NET_START_ON_BOOT`) and KOReader's
+  `native/profiles/notesl/profile.env` (`NET_START_ON_BOOT`) and KOReader's
   `wifi_was_on` / `auto_restore_wifi` settings.
 - **Wi-Fi cannot be turned off**: inspect `native/run.log` for
   `session.sh: can't execute: Permission denied`; verify that
   `session.sh` is invoked via `sh` and that the APK set its executable bit.
-- **No suspend**: intentional; `power.model = none`.  The old
-  `android_early_suspend`/RTC watchdog experiments are not part of this build.
+- **Suspend seems stuck / slow resume**: check `native/suspend.log` and
+  `dmesg` for `PM: suspend entry/exit`.  NoteSL needs
+  `suspend_unbind: ["dwmmc_rockchip:ff0d0000.rksdmmc"]`; without it the
+  unused SD controller adds ~10 seconds of mmc resume timeouts.  The legacy
+  `android_early_suspend`/`fb_ack` model is not used on this kernel.
+- **Rapid power presses**: ignored while a suspend/resume transition and its
+  repaint are in progress; wait for the screen to settle.
 - **Logs**: `native/run.log` in the app data directory; `logcat` is not
   available once the framework is stopped.
 - **App data extraction**: `.asset_version` records the last extracted
@@ -192,7 +214,8 @@ renews DHCP.
 ## References
 
 - `platform/native/README.md` — profile/session/driver framework
-- `platform/t65a/README.md` — T65A dev harness and native launcher
-- `platform/native/PORTING.md` — porting guide for other devices
-- AOSP `system/core/libsuspend` — the Android suspend enable/disable
-  mechanism (not used by this screensaver-only build)
+- `platform/native/RK_EBC.md` — Rockchip EBC direct-buffer porting, probe and
+  calibration guide
+- `platform/native-harness/README.md` — dev harness and native launcher
+- AOSP `system/core/libsuspend` — the Android wakelock/wakeup_count/`mem`
+  suspend model used by `android_wakeup_count`

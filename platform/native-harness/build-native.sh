@@ -24,5 +24,10 @@ if [[ ! -x "$CC" ]]; then
     exit 1
 fi
 
-"$CC" -O2 -Wall -Wextra -fPIE -pie -o koreader-t65a main.c -ldl
-echo "built: $(pwd)/koreader-t65a"
+"$CC" -O2 -Wall -Wextra -fPIE -pie -o koreader-native main.c -ldl
+echo "built: $(pwd)/koreader-native"
+
+# Double-fork/setsid helper used by start-session.sh and the APK so the
+# session survives adb/USB teardown (especially across suspend/resume).
+"$CC" -O2 -Wall -Wextra -fPIE -pie -o detach detach.c
+echo "built: $(pwd)/detach"
