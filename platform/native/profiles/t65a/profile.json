@@ -1,0 +1,95 @@
+{
+  "id": "t65a",
+  "model": "Likebook T65A",
+  "match": {
+    "product": "t65a",
+    "brand": "boyue"
+  },
+  "display": {
+    "fb": "/dev/graphics/fb0",
+    "blank": "/sys/class/graphics/fb0/blank",
+    "pan": "/sys/class/graphics/fb0/pan",
+    "pan_value": "0,0",
+    "backend": "mxcfb",
+    "portrait": true,
+    "touch_rotation": 1,
+    "dpi": 300,
+    "mxcfb_variant": "t65a"
+  },
+  "input": {
+    "devices": [
+      "/dev/input/event0",
+      "/dev/input/event1"
+    ],
+    "keys": {
+      "104": "LPgBack",
+      "109": "RPgFwd",
+      "116": "Power",
+      "158": "Back"
+    },
+    "quirks": [
+      "power_down_only",
+      "mt_a_touch_up"
+    ]
+  },
+  "power": {
+    "battery_capacity": "/sys/class/power_supply/battery/capacity",
+    "battery_status": "/sys/class/power_supply/battery/status",
+    "frontlight": "/sys/class/backlight/pwm-backlight.0/brightness",
+    "fl_min": 0,
+    "fl_max": 255,
+    "model": "none"
+  },
+  "network": {
+    "manage": true,
+    "start_on_boot": false,
+    "iface": "wlan0",
+    "backend": "wpa_supplicant_android",
+    "ctrl_dir": "/data/misc/wifi/sockets",
+    "service": "wpa_supplicant",
+    "dhcp_service": "dhcpcd_wlan0",
+    "dhcp_cmd": "/system/bin/dhcpcd",
+    "dhcp_flags": "-aABDKL",
+    "driver_module": "bcmdhd",
+    "driver_ko": "/system/lib/modules/bcmdhd.ko",
+    "driver_args": "iface_name=wlan firmware_path=/system/etc/firmware/fw_bcm43438a1.bin nvram_path=/system/etc/firmware/nvram.txt config_path=/system/etc/firmware/config.txt",
+    "android_props": true,
+    "service_prop": "init.svc.wpa_supplicant",
+    "sdio_host_driver": "sdhci",
+    "sdio_host_device": "sdhci-esdhc-imx.1"
+  },
+  "host": {
+    "backend": "android_init",
+    "stop": [
+      "zygote",
+      "surfaceflinger",
+      "media",
+      "drm",
+      "installd",
+      "keystore",
+      "ril-daemon"
+    ],
+    "start": [
+      "surfaceflinger",
+      "media",
+      "drm",
+      "installd",
+      "keystore",
+      "ril-daemon",
+      "zygote"
+    ],
+    "governor_native": "interactive",
+    "governor_fallback": "conservative"
+  },
+  "paths": {
+    "data_dir": "/sdcard/koreader",
+    "home_dir": "/sdcard/Books"
+  },
+  "tools": {
+    "ip": "/system/bin/ip",
+    "ping": "/system/bin/ping",
+    "setsid": "/system/bin/busybox setsid",
+    "getprop": "getprop",
+    "busybox": "/system/bin/busybox"
+  }
+}

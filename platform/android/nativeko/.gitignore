@@ -1,0 +1,4 @@
+.build/
+NativeKO.apk
+*.idsig
+nativeko.keystore

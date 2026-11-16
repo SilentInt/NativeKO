@@ -1,0 +1,6 @@
+platform/t65a/koreader-t65a
+platform/t65a/libkoreader-input.so
+platform/android/nativeko/.build/
+platform/android/nativeko/NativeKO.apk
+platform/android/nativeko/*.idsig
+platform/android/nativeko/nativeko.keystore
