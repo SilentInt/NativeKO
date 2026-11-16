@@ -190,5 +190,6 @@ renews DHCP.
 
 - `platform/native/README.md` — profile/session/driver framework
 - `platform/t65a/README.md` — T65A dev harness and native launcher
+- `platform/native/PORTING.md` — porting guide for other devices
 - AOSP `system/core/libsuspend` — the Android suspend enable/disable
   mechanism (not used by this screensaver-only build)

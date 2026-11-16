@@ -7,6 +7,9 @@ For the self-contained NativeKO APK (build, install, screensaver/Wi-Fi
 behaviour and troubleshooting), see
 [`../android/nativeko/README.md`](../android/nativeko/README.md).
 
+To port the framework to another device, see
+[`PORTING.md`](PORTING.md) (Chinese).
+
 ```
 profiles/<id>/profile.json     single source of truth (hardware + host data)
         |

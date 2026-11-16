@@ -78,7 +78,9 @@ adb shell su -c 'pm install -r /data/local/tmp/NativeKO.apk'
 Exit a running native session and start NativeKO again after an update so the
 new assets are extracted.  See
 [`platform/android/nativeko/README.md`](platform/android/nativeko/README.md)
-for runtime layout, Wi-Fi/session details and troubleshooting.
+for runtime layout, Wi-Fi/session details and troubleshooting, and
+[`platform/native/PORTING.md`](platform/native/PORTING.md) for porting to
+another device.
 
 ## Development
 
