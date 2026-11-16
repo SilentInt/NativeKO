@@ -18,7 +18,10 @@ def main():
         print(__doc__, file=sys.stderr)
         return 2
     out, src = sys.argv[1], sys.argv[2]
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+    # strict_timestamps=False clamps pre-1980 mtimes (some files pulled from
+    # Android have epoch/1970 timestamps) instead of raising ValueError.
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6,
+                         strict_timestamps=False) as zf:
         for root, dirs, files in os.walk(src):
             dirs.sort()
             files.sort()
