@@ -1,5 +1,8 @@
 # NativeKO
 
+> Project architecture, achievable effects and the user guide are in the
+> [top-level README](../../../README.md).
+
 NativeKO is a self-contained Android APK that launches KOReader on the
 Boyue Likebook T65A **without the Android framework**: it stops
 `zygote`/`SurfaceFlinger` and runs KOReader directly on the i.MX6 EPDC

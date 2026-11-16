@@ -10,6 +10,13 @@ behaviour and troubleshooting), see
 To port the framework to another device, see
 [`PORTING.md`](PORTING.md) (Chinese).
 
+This directory is the **generic framework**.  The T65A profile
+(`profiles/t65a`), the Android host/Wi-Fi drivers and the APK packaging
+in `platform/android/nativeko` are the reference example; porting to
+another device normally means replacing the profile and, if needed, the
+display backend / host driver / Wi-Fi driver.
+
+
 ```
 profiles/<id>/profile.json     single source of truth (hardware + host data)
         |
