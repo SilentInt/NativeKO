@@ -106,7 +106,7 @@ rm -rf "$STAGE/ko/frontend/device/t65a"
 mkdir -p "$STAGE/ko/frontend/device/native/suspend"
 cp -f "$ROOT/frontend/device/native/device.lua" "$ROOT/frontend/device/native/powerd.lua" \
       "$STAGE/ko/frontend/device/native/"
-cp -f "$ROOT/frontend/device/native/suspend/android_wakeup_count.lua" \
+cp -f "$ROOT/frontend/device/native/suspend/"*.lua \
       "$STAGE/ko/frontend/device/native/suspend/"
 cp -f "$ROOT/base/ffi/framebuffer_mxcfb.lua" "$ROOT/base/ffi/mxcfb_t65a_h.lua" \
       "$ROOT/base/ffi/framebuffer_rk_ebc.lua" \
@@ -117,6 +117,9 @@ cp -f "$ROOT/platform/native/common/lj-wpaclient/"*.lua "$STAGE/ko/common/lj-wpa
 mkdir -p "$STAGE/native"
 cp -f "$ROOT/platform/native-harness/koreader-native" "$STAGE/native/"
 cp -f "$ROOT/platform/native-harness/detach" "$STAGE/native/"
+if [ -f "$ROOT/platform/native-harness/libnativeko-dns.so" ]; then
+    cp -f "$ROOT/platform/native-harness/libnativeko-dns.so" "$STAGE/native/"
+fi
 for s in run-native.sh restore-android.sh; do
     cp -f "$ROOT/platform/native-harness/$s" "$STAGE/native/"
 done
@@ -129,10 +132,8 @@ cp -f "$ROOT/platform/native/core/start-session.sh" "$STAGE/native/start-session
 cp -f "$ROOT/platform/native/drivers/host/"*.sh "$STAGE/native/drivers/host/"
 cp -f "$ROOT/platform/native/drivers/wifi/"*.sh "$STAGE/native/drivers/wifi/"
 cp -f "$ROOT/platform/native/drivers/pm/"*.sh "$STAGE/native/drivers/pm/"
-# Do not ship the legacy Android early-suspend acker; the NoteSL profile uses
-# the android_wakeup_count model instead.
-rm -f "$STAGE/native/drivers/pm/android_early_suspend.sh" \
-      "$STAGE/native/drivers/pm/fb_ack.sh"
+# Keep the legacy early-suspend acker available: the t65a profile uses it,
+# while NoteSL selects android_wakeup_count and never sources it.
 python3 "$ROOT/platform/native/tools/profilegen.py" \
     "$PROFILE_JSON" "$STAGE/native/profiles/$PROFILE_ID"
 # MainActivity reads this and exports KO_NATIVE_PROFILE_ID; this keeps the
@@ -149,6 +150,27 @@ python3 "$PROJECT/tools/makezip.py" "$BUILD/assets/native.zip" "$STAGE/native"
 echo "== building APK =="
 cd "$BUILD"
 AAPT2="$BT/aapt2.exe"
+
+# Compile the launcher icon resources (aapt2 link needs compiled .flat files).
+RES_DIR="$PROJECT/res"
+RES_ZIP="$BUILD/res.zip"
+rm -f "$RES_ZIP"
+if [ -d "$RES_DIR" ]; then
+    if [ -x "$AAPT2" ]; then
+        ( cd /mnt/c && "$AAPT2" compile --dir "$(wslpath -w "$RES_DIR")" \
+            -o "$(wslpath -w "$RES_ZIP")" )
+    else
+        "$BT/aapt2" compile --dir "$RES_DIR" -o "$RES_ZIP"
+    fi
+fi
+LINK_RES=()
+if [ -f "$RES_ZIP" ]; then
+    if [ -x "$AAPT2" ]; then
+        LINK_RES=(-R "$(wslpath -w "$RES_ZIP")")
+    else
+        LINK_RES=(-R "$RES_ZIP")
+    fi
+fi
 if [ -x "$AAPT2" ]; then
     # Windows build-tools on WSL: pass Windows paths and run from a Windows
     # directory (a UNC CWD confuses some Windows tooling).
@@ -157,10 +179,12 @@ if [ -x "$AAPT2" ]; then
     ( cd /mnt/c && "$AAPT2" link -o "$(wslpath -w "$OUT")" \
         -I "$(wslpath -w "$ANDROID_JAR")" \
         --manifest "$(wslpath -w "$MAN")" \
+        "${LINK_RES[@]}" \
         --min-sdk-version 19 --target-sdk-version 19 )
 else
     "$BT/aapt2" link -o "$UNSIGNED" -I "$ANDROID_JAR" \
         --manifest "$PROJECT/AndroidManifest.xml" \
+        "${LINK_RES[@]}" \
         --min-sdk-version 19 --target-sdk-version 19
 fi
 

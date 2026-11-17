@@ -50,10 +50,15 @@
 #define EBC_GET_DRIVER_SN   0x7002
 #define EBC_GET_BUFFER_INFO 0x7003
 #define EBC_SEND_UPDATE     0x700c
+#define EBC_DRAW_UPDATE     0x7005
+#define EBC_DRAW_STOP       0x7006
+#define EBC_SEND_UPDATE_ALT 0x7007
+#define EBC_DRAW_ENABLE     0x7008
 
 #define EBC_DEVICE "/dev/ebc"
 #define FB_DEVICE  "/dev/graphics/fb0"
-#define MAP_LEN    (8 * 1024 * 1024)
+#define MAP_LEN    (10 * 1024 * 1024)
+#define MAX_MAP_LEN (12 * 1024 * 1024)
 
 struct ebc_buf_info {
     int offset;
@@ -240,6 +245,71 @@ static int do_hist(void)
     return 0;
 }
 
+
+static const char *label_font[10][5] = {
+    {"111", "101", "101", "101", "111"},
+    {"010", "110", "010", "010", "111"},
+    {"111", "001", "111", "100", "111"},
+    {"111", "001", "111", "001", "111"},
+    {"101", "101", "111", "001", "001"},
+    {"111", "100", "111", "001", "111"},
+    {"111", "100", "111", "101", "111"},
+    {"111", "001", "001", "001", "001"},
+    {"111", "101", "111", "101", "111"},
+    {"111", "101", "111", "001", "111"},
+};
+
+static void put_black(unsigned char *d, int stride, int bpp,
+                      int x, int y, int w, int h)
+{
+    if (x < 0 || y < 0 || x >= w || y >= h) return;
+    if (bpp == 8) {
+        d[(size_t)y * stride + x] = 0x00;
+    } else if (bpp == 32) {
+        ((uint32_t *)(d + (size_t)y * stride))[x] = 0xFF000000u;
+    } else if (bpp == 16) {
+        ((uint16_t *)(d + (size_t)y * stride))[x] = 0x0000;
+    } else if (bpp == 4) {
+        unsigned char *p = d + (size_t)y * stride + x / 2;
+        if (x & 1) *p &= 0xF0; else *p &= 0x0F;
+    }
+}
+
+/* The buffer is scanned 90 degrees clockwise: buffer (x,y) maps to
+ * portrait (X = h-1-y, Y = x). Draw the label upright in portrait. */
+static void draw_label(unsigned char *d, int w, int h, int bpp, int stride,
+                       int value)
+{
+    char text[16];
+    snprintf(text, sizeof(text), "%d", value);
+    int n = (int)strlen(text);
+    if (n <= 0) return;
+    int scale = 64;
+    int glyph_w = 3 * scale, glyph_h = 5 * scale;
+    int gap = scale;
+    int total_w = n * glyph_w + (n - 1) * gap;
+    int x0 = (h - total_w) / 2;   /* portrait width = buffer height */
+    int y0 = (w - glyph_h) / 2;   /* portrait height = buffer width */
+    for (int i = 0; i < n; i++) {
+        int digit = text[i] - '0';
+        if (digit < 0 || digit > 9) continue;
+        for (int gy = 0; gy < 5; gy++) {
+            for (int gx = 0; gx < 3; gx++) {
+                if (label_font[digit][gy][gx] != '1') continue;
+                for (int sy = 0; sy < scale; sy++) {
+                    for (int sx = 0; sx < scale; sx++) {
+                        int X = x0 + i * (glyph_w + gap) + gx * scale + sx;
+                        int Y = y0 + gy * scale + sy;
+                        int bx = Y;
+                        int by = (h - 1) - X;
+                        put_black(d, stride, bpp, bx, by, w, h);
+                    }
+                }
+            }
+        }
+    }
+}
+
 static void fill_pattern(unsigned char *d, int w, int h, int bpp,
                          const char *kind, int n)
 {
@@ -263,7 +333,10 @@ static void fill_pattern(unsigned char *d, int w, int h, int bpp,
                 p[x / 2] |= black ? 0x00 : 0x0F;
                 if (black) p[x / 2] &= 0xF0;
             } else if (bpp == 8) {
-                p[x] = black ? 0x00 : 0xFF;
+                /* Alita EBC uses a 5-bit / 16-level code: 0x00 black,
+                 * 0x1e (30) white.  0xff is not a valid panel code and
+                 * gets flashed away by the waveform. */
+                p[x] = black ? 0x00 : 0x1E;
             } else if (bpp == 16) {
                 uint16_t v = black ? 0x0000 : 0xFFFF;
                 memcpy(p + x * 2, &v, 2);
@@ -276,7 +349,10 @@ static void fill_pattern(unsigned char *d, int w, int h, int bpp,
 }
 
 static int do_pattern(int bpp, int stride, const char *kind, int n,
-                      int offset, int epd_mode, int do_update, int force)
+                      int offset, int epd_mode, int do_update, int force,
+                      int hwc, int hwc_update, int waveform,
+                      int update_mode, int label, int get_buffer,
+                      int draw_enable, int draw_update, int draw_stop)
 {
     if (!force && surfaceflinger_running()) {
         fprintf(stderr, "surfaceflinger is running; stop the framework "
@@ -286,24 +362,55 @@ static int do_pattern(int bpp, int stride, const char *kind, int n,
     int fd = open(EBC_DEVICE, O_RDWR);
     if (fd < 0) { perror("open " EBC_DEVICE); return 1; }
 
+    if (hwc || draw_enable) {
+        errno = 0;
+        int erc = ioctl(fd, EBC_DRAW_ENABLE, 0);
+        printf("DRAW_ENABLE rc=%d errno=%d (%s)\n", erc, errno,
+               strerror(errno));
+    }
+
     struct ebc_buf_info info;
     memset(&info, 0, sizeof(info));
     ioctl(fd, EBC_GET_BUFFER_INFO, &info);
     int w = info.width > 0 ? info.width : 1200;
     int h = info.height > 0 ? info.height : 825;
+
+    if (hwc || get_buffer) {
+        struct ebc_buf_info acq;
+        memset(&acq, 0, sizeof(acq));
+        timed_out = 0;
+        alarm(3);
+        errno = 0;
+        int arc = ioctl(fd, EBC_GET_BUFFER, &acq);
+        alarm(0);
+        if (timed_out) {
+            printf("GET_BUFFER timed out\n");
+        } else if (arc == 0) {
+            printf("GET_BUFFER rc=0 offset=%d %dx%d epd_mode=%d\n",
+                   acq.offset, acq.width, acq.height, acq.epd_mode);
+            if (offset < 0) offset = acq.offset;
+            if (acq.width > 0) w = acq.width;
+            if (acq.height > 0) h = acq.height;
+        } else {
+            printf("GET_BUFFER failed rc=%d errno=%d (%s)\n", arc, errno,
+                   strerror(errno));
+        }
+    }
+    if (offset < 0) offset = 0;
     if (stride <= 0) stride = w * bpp / 8;
     size_t size = (size_t)offset + (size_t)stride * h;
-    if (size > MAP_LEN) {
+    if (size > MAX_MAP_LEN) {
         fprintf(stderr, "bpp=%d stride=%d does not fit %d-byte mapping\n",
-                bpp, stride, MAP_LEN);
+                bpp, stride, MAX_MAP_LEN);
         return 1;
     }
 
-    unsigned char *map = mmap(NULL, MAP_LEN, PROT_READ | PROT_WRITE,
+    unsigned char *map = mmap(NULL, size, PROT_READ | PROT_WRITE,
                               MAP_SHARED, fd, 0);
     if (map == MAP_FAILED) { perror("mmap"); return 1; }
-    memset(map, 0xFF, MAP_LEN);
+    memset(map, 0xFF, size);
     fill_pattern(map + offset, w, h, bpp, kind, n);
+    if (label >= 0) draw_label(map + offset, w, h, bpp, stride, label);
 
     memset(&info, 0, sizeof(info));
     info.offset = offset;
@@ -314,21 +421,51 @@ static int do_pattern(int bpp, int stride, const char *kind, int n,
     info.vir_height = h;
     info.fb_width = w;
     info.fb_height = h;
-    info.win_x2 = w - 1;
-    info.win_y2 = h - 1;
+    info.win_x2 = w;
+    info.win_y2 = h;
     int rc = ioctl(fd, EBC_SEND_BUFFER, &info);
     printf("pattern kind=%s bpp=%d stride=%d offset=%d SEND_BUFFER rc=%d\n",
            kind, bpp, stride, offset, rc);
 
-    if (do_update) {
+    if (hwc || draw_update || draw_stop) {
+        if (hwc_update) {
+            struct ebc_send_update upd;
+            memset(&upd, 0, sizeof(upd));
+            upd.rect[0] = 0;      /* y on rk29 */
+            upd.rect[1] = 0;      /* x */
+            upd.rect[2] = w;
+            upd.rect[3] = h;
+            upd.waveform_mode = waveform;
+            upd.update_mode = update_mode;
+            upd.update_marker = 1;
+            upd.unknown_1c = 0x1000;
+            upd.flags = 0x21000;
+            errno = 0;
+            int erc = ioctl(fd, EBC_SEND_UPDATE_ALT, &upd);
+            printf("SEND_UPDATE_ALT(0x7007) rc=%d errno=%d (%s)\n",
+                   erc, errno, strerror(errno));
+        }
+        if (hwc || draw_update) {
+            errno = 0;
+            int urc = ioctl(fd, EBC_DRAW_UPDATE, 0);
+            printf("DRAW_UPDATE rc=%d errno=%d (%s)\n", urc, errno,
+                   strerror(errno));
+        }
+        if (hwc || draw_stop) {
+            errno = 0;
+            int src = ioctl(fd, EBC_DRAW_STOP, 0);
+            printf("DRAW_STOP rc=%d errno=%d (%s)\n", src, errno,
+                   strerror(errno));
+        }
+    } else if (do_update) {
         struct ebc_send_update upd;
         memset(&upd, 0, sizeof(upd));
         upd.rect[0] = 0;      /* y on rk29 */
         upd.rect[1] = 0;      /* x */
         upd.rect[2] = w;
         upd.rect[3] = h;
-        upd.waveform_mode = 2;
-        upd.update_mode = 1;
+        upd.waveform_mode = waveform;
+        upd.update_mode = update_mode;
         upd.update_marker = 1;
         upd.unknown_1c = 0x1000;
         upd.flags = 0x21000;
@@ -339,7 +476,6 @@ static int do_pattern(int bpp, int stride, const char *kind, int n,
            "  * full-screen pattern + correct orientation -> bpp/stride OK\n"
            "  * narrow strip / only one side -> try other bpp (8, 16, 32)\n"
            "  * pattern rotated -> calibrate with 'corner' and set touch_rotation\n");
-    sleep(2);
     return 0;
 }
 
@@ -361,14 +497,146 @@ static int do_test(void)
     return 0;
 }
 
+
+/* Keep the EBC fd open across two updates, like the vendor HWC does.  This
+ * tests whether DRAW_ENABLE has to stay held for SEND_BUFFER to reach the
+ * panel, and lets us compare two epd_mode values back to back. */
+static int do_drawtest(int mode1, int mode2, int bpp, int stride, int follow)
+{
+    if (surfaceflinger_running()) {
+        fprintf(stderr, "surfaceflinger is running; stop it first\n");
+        return 2;
+    }
+    int fd = open(EBC_DEVICE, O_RDWR);
+    if (fd < 0) { perror("open " EBC_DEVICE); return 1; }
+
+    errno = 0;
+    int erc = ioctl(fd, EBC_DRAW_ENABLE, 0);
+    printf("DRAW_ENABLE rc=%d errno=%d (%s)\n", erc, errno, strerror(errno));
+
+    unsigned char *map = mmap(NULL, MAX_MAP_LEN, PROT_READ | PROT_WRITE,
+                              MAP_SHARED, fd, 0);
+    if (map == MAP_FAILED) { perror("mmap"); close(fd); return 1; }
+
+    for (int i = 0; i < 2; i++) {
+        struct ebc_buf_info acq;
+        memset(&acq, 0, sizeof(acq));
+        errno = 0;
+        int arc = ioctl(fd, EBC_GET_BUFFER, &acq);
+        if (arc != 0) {
+            printf("GET_BUFFER[%d] failed rc=%d errno=%d (%s)\n",
+                   i, arc, errno, strerror(errno));
+            break;
+        }
+        int off = acq.offset;
+        int w = acq.width > 0 ? acq.width : 1872;
+        int h = acq.height > 0 ? acq.height : 1404;
+        int row = w * bpp / 8;
+        if (stride > 0) row = stride;
+        size_t size = (size_t)off + (size_t)row * h;
+        if (off < 0 || size > MAX_MAP_LEN) {
+            printf("GET_BUFFER[%d] offset=%d does not fit mapping\n", i, off);
+            break;
+        }
+        memset(map + off, 0xFF, (size_t)row * h);
+        fill_pattern(map + off, w, h, bpp, "corner", i == 0 ? 0 : 1);
+
+        struct ebc_buf_info info = acq;
+        info.epd_mode = i == 0 ? mode1 : mode2;
+        info.win_x1 = 0;
+        info.win_y1 = 0;
+        info.win_x2 = w;
+        info.win_y2 = h;
+        errno = 0;
+        int src = ioctl(fd, EBC_SEND_BUFFER, &info);
+        printf("SEND_BUFFER[%d] off=%d mode=%d rotate=%d win=%d,%d rc=%d errno=%d (%s)\n",
+               i, off, info.epd_mode, acq.rotate, info.win_x2, info.win_y2,
+               src, errno, strerror(errno));
+        if (follow >= 0) {
+            info.epd_mode = follow;
+            errno = 0;
+            int frc = ioctl(fd, EBC_SEND_BUFFER, &info);
+            printf("SEND_BUFFER_FOLLOW[%d] mode=%d rc=%d errno=%d (%s)\n",
+                   i, follow, frc, errno, strerror(errno));
+        }
+        sleep(2);
+    }
+
+    errno = 0;
+    int drc = ioctl(fd, EBC_DRAW_STOP, 0);
+    printf("DRAW_STOP rc=%d errno=%d (%s)\n", drc, errno, strerror(errno));
+    munmap(map, MAX_MAP_LEN);
+    close(fd);
+    return 0;
+}
+
+
+/* Full-screen clear through the vendor GET_BUFFER/SEND_BUFFER path. */
+static int do_clear(int mode, int bpp, int stride)
+{
+    if (surfaceflinger_running()) {
+        fprintf(stderr, "surfaceflinger is running; stop it first\n");
+        return 2;
+    }
+    int fd = open(EBC_DEVICE, O_RDWR);
+    if (fd < 0) { perror("open " EBC_DEVICE); return 1; }
+    ioctl(fd, EBC_DRAW_ENABLE, 0);
+    unsigned char *map = mmap(NULL, MAX_MAP_LEN, PROT_READ | PROT_WRITE,
+                              MAP_SHARED, fd, 0);
+    if (map == MAP_FAILED) { perror("mmap"); close(fd); return 1; }
+    struct ebc_buf_info info;
+    memset(&info, 0, sizeof(info));
+    int rc = ioctl(fd, EBC_GET_BUFFER, &info);
+    if (rc != 0 || info.offset < 0) {
+        printf("GET_BUFFER failed rc=%d offset=%d\n", rc, info.offset);
+        munmap(map, MAX_MAP_LEN); close(fd); return 1;
+    }
+    int w = info.width > 0 ? info.width : 1872;
+    int h = info.height > 0 ? info.height : 1404;
+    int row = stride > 0 ? stride : w * bpp / 8;
+    if (info.offset + (size_t)row * h > MAX_MAP_LEN) {
+        printf("buffer does not fit mapping\n");
+        munmap(map, MAX_MAP_LEN); close(fd); return 1;
+    }
+    fill_pattern(map + info.offset, w, h, bpp, "white", 0);
+    info.epd_mode = mode;
+    info.win_x1 = 0;
+    info.win_y1 = 0;
+    info.win_x2 = w;
+    info.win_y2 = h;
+    rc = ioctl(fd, EBC_SEND_BUFFER, &info);
+    printf("CLEAR off=%d mode=%d rc=%d\n", info.offset, mode, rc);
+    sleep(2);
+    ioctl(fd, EBC_DRAW_STOP, 0);
+    munmap(map, MAX_MAP_LEN);
+    close(fd);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     const char *cmd = argc > 1 ? argv[1] : "info";
-    int force = 0, do_update = 1, offset = 0, epd_mode = 1;
+    int force = 0, do_update = 1, offset = -1, epd_mode = 1, hwc = 0;
+    int hwc_update = 0;
+    int waveform = 2, update_mode = 1, label = -1, get_buffer = 0;
+    int draw_enable = 0, draw_update = 0, draw_stop = 0;
     int argi = 2;
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--force")) { force = 1; argi = i + 1; }
         else if (!strcmp(argv[i], "--no-update")) { do_update = 0; argi = i + 1; }
+        else if (!strcmp(argv[i], "--hwc")) { hwc = 1; argi = i + 1; }
+        else if (!strcmp(argv[i], "--hwc-update")) { hwc_update = 1; argi = i + 1; }
+        else if (!strcmp(argv[i], "--get-buffer")) { get_buffer = 1; argi = i + 1; }
+        else if (!strcmp(argv[i], "--draw-enable")) { draw_enable = 1; argi = i + 1; }
+        else if (!strcmp(argv[i], "--draw-update")) { draw_update = 1; argi = i + 1; }
+        else if (!strcmp(argv[i], "--draw-stop")) { draw_stop = 1; argi = i + 1; }
+        else if (!strcmp(argv[i], "--waveform") && i + 1 < argc) {
+            waveform = atoi(argv[++i]); argi = i + 1;
+        } else if (!strcmp(argv[i], "--update-mode") && i + 1 < argc) {
+            update_mode = atoi(argv[++i]); argi = i + 1;
+        } else if (!strcmp(argv[i], "--label") && i + 1 < argc) {
+            label = atoi(argv[++i]); argi = i + 1;
+        }
         else if (!strcmp(argv[i], "--offset") && i + 1 < argc) {
             offset = atoi(argv[++i]); argi = i + 1;
         } else if (!strcmp(argv[i], "--epd-mode") && i + 1 < argc) {
@@ -380,6 +648,20 @@ int main(int argc, char **argv)
     }
 
     if (!strcmp(cmd, "info")) return do_info();
+    if (!strcmp(cmd, "clear")) {
+        int mode = argi < argc ? atoi(argv[argi++]) : 1;
+        int bpp = argi < argc ? atoi(argv[argi++]) : 8;
+        int stride = argi < argc ? atoi(argv[argi++]) : 1872;
+        return do_clear(mode, bpp, stride);
+    }
+    if (!strcmp(cmd, "drawtest")) {
+        int m1 = argi < argc ? atoi(argv[argi++]) : 1;
+        int m2 = argi < argc ? atoi(argv[argi++]) : 2;
+        int bpp = argi < argc ? atoi(argv[argi++]) : 8;
+        int stride = argi < argc ? atoi(argv[argi++]) : 1872;
+        int follow = argi < argc ? atoi(argv[argi++]) : -1;
+        return do_drawtest(m1, m2, bpp, stride, follow);
+    }
     if (!strcmp(cmd, "hist")) return do_hist();
     if (!strcmp(cmd, "test")) return do_test();
     if (!strcmp(cmd, "pattern")) {
@@ -388,7 +670,9 @@ int main(int argc, char **argv)
         const char *kind = argi < argc ? argv[argi++] : "stripes";
         int n = argi < argc ? atoi(argv[argi++]) : 0;
         return do_pattern(bpp, stride, kind, n, offset, epd_mode,
-                          do_update, force);
+                          do_update, force, hwc, hwc_update,
+                          waveform, update_mode, label, get_buffer,
+                          draw_enable, draw_update, draw_stop);
     }
     fprintf(stderr, "usage: %s [info|hist|test|pattern] [-h]\n", argv[0]);
     return 2;

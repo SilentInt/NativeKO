@@ -79,9 +79,11 @@ without touching anything; `--no-stop` keeps the Android framework running.
 
 ## Profile fields
 
-Reference profiles: `profiles/notesl/profile.json` (Onyx NoteS / 超星
-NoteSL, Rockchip EBC direct buffer) and `profiles/t65a/profile.json` (Likebook
-T65A, i.MX6 mxcfb).  Main sections:
+Reference profiles: `profiles/alita/profile.json` (Likebook Alita K103,
+RK3368, direct `/dev/ebc` with 8bpp 5-bit codes, dual frontlight; see
+[`K103_ALITA.md`](K103_ALITA.md)), `profiles/notesl/profile.json` (Onyx NoteS /
+超星 NoteSL, RK3288 EBC) and `profiles/t65a/profile.json` (Likebook T65A,
+i.MX6 mxcfb).  K103 and NoteSL are different devices.  Main sections:
 
 - `display`: framebuffer node/backend/rotation/portrait/dpi, pan and blank
   nodes.  `backend` selects the display module:
@@ -102,9 +104,11 @@ T65A, i.MX6 mxcfb).  Main sections:
   `wake_lock_name`, `wake_unlock` and `rtc_alarm` (stale alarms are cleared).
 - `network`: interface, supplicant control dir and optional full
   `ctrl_interface` path, global-socket flags (`wpa_global`/`wpa_ifname`), init
-  service and its `service_prop` (for status), DHCP command, optional
-  in-kernel driver module, Android property integration, and `start_on_boot`
-  (false for NativeKO).
+  service and its `service_prop` (for status), DHCP command/flags or
+  `dhcp_kind: "udhcpc"` + `dhcp_busybox`, optional `dns` servers (enables the
+  `LD_PRELOAD` resolver shim), `selinux_allow` rules (applied by `wifi_up`),
+  optional in-kernel driver module, Android property integration, and
+  `start_on_boot` (false for NativeKO).
 - `host`: backend name, services to stop/start, governor policy.
 - `tools`: paths for `ip`, `ping`, `setsid`, `getprop`, `busybox` (Android
   profiles point at `/system/bin/...`; desktop Linux profiles can omit them).

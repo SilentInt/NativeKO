@@ -98,6 +98,27 @@ local framebuffer = {
     ebc_update_mode_fast = 0,
     ebc_unknown_1c = 0x1000,
     ebc_flags = 0x21000,
+
+    -- Vendor HWC path (Likebook Alita): instead of a fixed mmap offset and
+    -- 0x700c, acquire a buffer with GET_BUFFER, write an 8bpp frame, and post
+    -- it with SEND_BUFFER.  The panel code is 5-bit (0..30), not 0..255.
+    ebc_vendor_post = false,
+    ebc_cmd_get_buffer = 0x7000,
+    ebc_cmd_draw_enable = 0x7008,
+    ebc_cmd_draw_stop = 0x7006,
+    ebc_epd_mode_full = 1,       -- EPD_FULL
+    ebc_epd_mode_partial = 15,   -- EPD_REGLA (text/quality partial)
+    ebc_epd_mode_ui = 15,        -- EPD_REGLA
+    ebc_epd_mode_flash = 11,     -- EPD_FORCE_FULL
+    ebc_epd_mode_fast = 18,      -- EPD_FAST
+    ebc_epd_mode_a2 = 2,         -- EPD_A2
+    ebc_epd_mode_dither = 100,   -- EPD_DITHER
+    ebc_epd_mode_screensaver = 102, -- EPD_FULL_DITHER
+    ebc_map_len = 12 * 1024 * 1024,
+    ebc_gray_shift = 3,
+    ebc_gray_max = 30,
+    ebc_gamma_level = nil,  -- sys.by.gammalevel; use the vendor 16-gray LUT
+    ebc_screensaver_mode = false, -- vendor EPD_FULL_DITHER screensaver path
 }
 
 function framebuffer:init()
@@ -112,6 +133,15 @@ function framebuffer:init()
     self.fd = C.open(self.device_node, bit.bor(C.O_RDWR, C.O_CLOEXEC))
     if self.fd == -1 then
         error("framebuffer_rk_ebc: cannot open " .. self.device_node)
+    end
+
+    if self.ebc_vendor_post then
+        self:_vendorInit(w, h, stride)
+        framebuffer.parent.init(self)
+        if self.ebc_enabled and self.ebc_send_initial then
+            self:_vendorPost(self.ebc_epd_mode_full)
+        end
+        return
     end
 
     self.data = C.mmap(nil, map_len, bit.bor(C.PROT_READ, C.PROT_WRITE),
@@ -149,6 +179,154 @@ function framebuffer:init()
         self:_sendBuffer()
         self:_sendUpdate(0, 0, w, h,
                          self.ebc_waveform_full, self.ebc_update_mode_full)
+    end
+end
+
+
+
+-- The vendor HWC builds this table in init_gamma_table(gamma_level) and uses
+-- it for both rgb_to_16gray and Luma8bit_to_16gray.  Values are 0..30 (even
+-- levels), with the exact piecewise curve below.  This is what the stock UI
+-- feeds to the EBC driver; a linear 0..30 map does not match it.
+local function build_gamma_lut(level)
+    level = tonumber(level) or 14
+    if level < 0 then level = 0 end
+    if level > 80 then level = 80 end
+    local function trunc_div(a, b)
+        local q = a / b
+        if q >= 0 then return math.floor(q) end
+        return math.ceil(q)
+    end
+    local p = level
+    local u = 224 - (bit.rshift(p, 1) + p * 2)
+    local q = trunc_div(u, 14)
+    local r = u - q * 14
+    local d = q - 16 - r
+    local low_end = p * 2 + 16
+    local high_start = 240 - bit.rshift(p, 1)
+    local lut = ffi.new("uint8_t[256]")
+    for i = 0, 255 do
+        local v
+        if i < low_end then
+            v = 0
+        elseif i > high_start then
+            v = 30
+        elseif r < 1 then
+            v = trunc_div(d - p * 2 + i, q) * 2
+        else
+            local tmp = q - 15 - p * 2 + i
+            local vv = trunc_div(tmp, q + 1)
+            v = vv * 2
+            if tmp == vv * (q + 1) then
+                r = r - 1
+            end
+        end
+        if v < 0 then v = 0 elseif v > 30 then v = 30 end
+        lut[i] = v
+    end
+    return lut
+end
+
+-- Vendor HWC path: the driver hands out a rotating buffer offset through
+-- GET_BUFFER; the frame must be written there, then posted with SEND_BUFFER.
+-- Keeping the vendor ebc_buf_info intact is important (rotate/geometry).
+function framebuffer:_vendorInit(w, h, stride)
+    local map_len = self.ebc_map_len or (12 * 1024 * 1024)
+    local rc = C.ioctl(self.fd, self.ebc_cmd_draw_enable, nil)
+    if rc < 0 then
+        self.debug("framebuffer_rk_ebc: DRAW_ENABLE failed")
+    end
+    self.data = C.mmap(nil, map_len, bit.bor(C.PROT_READ, C.PROT_WRITE),
+                       C.MAP_SHARED, self.fd, 0)
+    if self.data == C.MAP_FAILED then
+        C.close(self.fd)
+        error("framebuffer_rk_ebc: cannot mmap " .. self.device_node)
+    end
+    self.map_len = map_len
+    self.stride = stride
+    self.width = w
+    self.height = h
+    self.bpp = 8
+    self.screen_size = { w = w, h = h }
+
+    -- The panel buffer is 8bpp but carries a 5-bit / 16-level code:
+    -- 0x00 black .. 0x1e white.  Prefer the vendor gamma curve; keep the
+    -- linear shift as a fallback for profiles without a gamma level.
+    if self.ebc_gamma_level ~= nil then
+        self._gray_lut = build_gamma_lut(self.ebc_gamma_level)
+    else
+        local lut = ffi.new("uint8_t[256]")
+        local shift = self.ebc_gray_shift or 3
+        local maxv = self.ebc_gray_max or 30
+        for i = 0, 255 do
+            local v = bit.rshift(i, shift)
+            if v > maxv then v = maxv end
+            lut[i] = v
+        end
+        self._gray_lut = lut
+    end
+
+    self.bb = BB.new(w, h, BB.TYPE_BB8)
+    self.bb:fill(BB.COLOR_WHITE)
+    if self.ebc_rotate and self.ebc_rotate ~= 0 then
+        self.bb:rotate(self.ebc_rotate)
+        self.screen_size = { w = self.bb:getWidth(), h = self.bb:getHeight() }
+    end
+    self.debug("framebuffer_rk_ebc: vendor POST buffer", w, h,
+               "stride", stride, "map", map_len)
+end
+
+function framebuffer:_vendorConvert(dst)
+    local src = ffi.cast("uint8_t*", self.bb.data)
+    local lut = self._gray_lut
+    local n = self.ebc_stride * self.ebc_height
+    for i = 0, n - 1 do
+        dst[i] = lut[src[i]]
+    end
+end
+
+function framebuffer:_vendorPost(mode)
+    if not self.ebc_enabled then return end
+    if os.getenv("KO_NATIVE_EBC_LOG") then
+        local info = debug.getinfo(2, "nSl")
+        print(os.date("%H:%M:%S"), "EBC post mode=", mode,
+              info and (info.name or info.short_src) or "?",
+              info and info.currentline or "")
+    end
+    local info = ffi.new("rk_ebc_buf_info")
+    local rc = C.ioctl(self.fd, self.ebc_cmd_get_buffer, info)
+    if rc < 0 or info.offset == -1 then
+        self.debug("framebuffer_rk_ebc: GET_BUFFER failed")
+        return
+    end
+    local off = tonumber(info.offset)
+    local need = self.ebc_stride * self.ebc_height
+    if off < 0 or off + need > self.map_len then
+        self.debug("framebuffer_rk_ebc: bad buffer offset", off)
+        return
+    end
+    local dst = ffi.cast("uint8_t*", self.data) + off
+    self:_vendorConvert(dst)
+    info.epd_mode = mode
+    info.win_x1 = 0
+    info.win_y1 = 0
+    info.win_x2 = info.width > 0 and info.width or self.ebc_width
+    info.win_y2 = info.height > 0 and info.height or self.ebc_height
+    rc = C.ioctl(self.fd, self.ebc_cmd_send_buffer, info)
+    if rc < 0 then
+        self.debug("framebuffer_rk_ebc: SEND_BUFFER failed")
+    end
+end
+
+
+-- Screensaver/lock screen: the factory exposes EPD_FULL_DITHER (102) for
+-- dithered full-screen images.  Keep this separate from refreshFullImp so
+-- ordinary full refreshes still use EPD_FULL (1).
+function framebuffer:refreshScreensaver()
+    if self.ebc_vendor_post then
+        self:_vendorPost(self.ebc_epd_mode_screensaver or 102)
+    else
+        self:refreshFullImp(0, 0, self:getWidth(), self:getHeight())
     end
 end
 
@@ -229,46 +407,82 @@ function framebuffer:ebcRefresh(x, y, w, h, waveform, update_mode, full)
 end
 
 function framebuffer:refreshFullImp(x, y, w, h)
+    if self.ebc_vendor_post then
+        self:_vendorPost(self.ebc_epd_mode_full)
+        return
+    end
     self:ebcRefresh(x, y, w, h, self.ebc_waveform_full,
                     self.ebc_update_mode_full, true)
 end
 
 function framebuffer:refreshPartialImp(x, y, w, h)
+    if self.ebc_vendor_post then
+        self:_vendorPost(self.ebc_epd_mode_partial)
+        return
+    end
     self:ebcRefresh(x, y, w, h, self.ebc_waveform_partial,
                     self.ebc_update_mode_partial, false)
 end
 
 function framebuffer:refreshNoMergePartialImp(x, y, w, h)
+    if self.ebc_vendor_post then
+        self:_vendorPost(self.ebc_epd_mode_partial)
+        return
+    end
     self:ebcRefresh(x, y, w, h, self.ebc_waveform_partial,
                     self.ebc_update_mode_partial, false)
 end
 
 function framebuffer:refreshFlashPartialImp(x, y, w, h)
+    if self.ebc_vendor_post then
+        self:_vendorPost(self.ebc_epd_mode_flash)
+        return
+    end
     self:ebcRefresh(x, y, w, h, self.ebc_waveform_partial,
                     self.ebc_update_mode_full, false)
 end
 
 function framebuffer:refreshUIImp(x, y, w, h)
+    if self.ebc_vendor_post then
+        self:_vendorPost(self.ebc_epd_mode_ui)
+        return
+    end
     self:ebcRefresh(x, y, w, h, self.ebc_waveform_partial,
                     self.ebc_update_mode_partial, false)
 end
 
 function framebuffer:refreshNoMergeUIImp(x, y, w, h)
+    if self.ebc_vendor_post then
+        self:_vendorPost(self.ebc_epd_mode_ui)
+        return
+    end
     self:ebcRefresh(x, y, w, h, self.ebc_waveform_partial,
                     self.ebc_update_mode_partial, false)
 end
 
 function framebuffer:refreshFlashUIImp(x, y, w, h)
+    if self.ebc_vendor_post then
+        self:_vendorPost(self.ebc_epd_mode_flash)
+        return
+    end
     self:ebcRefresh(x, y, w, h, self.ebc_waveform_partial,
                     self.ebc_update_mode_full, false)
 end
 
 function framebuffer:refreshFastImp(x, y, w, h)
+    if self.ebc_vendor_post then
+        self:_vendorPost(self.ebc_epd_mode_fast)
+        return
+    end
     self:ebcRefresh(x, y, w, h, self.ebc_waveform_fast,
                     self.ebc_update_mode_fast, false)
 end
 
 function framebuffer:refreshA2Imp(x, y, w, h)
+    if self.ebc_vendor_post then
+        self:_vendorPost(self.ebc_epd_mode_a2)
+        return
+    end
     self:ebcRefresh(x, y, w, h, self.ebc_waveform_fast,
                     self.ebc_update_mode_fast, false)
 end
@@ -277,6 +491,9 @@ function framebuffer:refreshWaitForLastImp()
 end
 
 function framebuffer:close()
+    if self.ebc_vendor_post and self.fd and self.fd >= 0 then
+        C.ioctl(self.fd, self.ebc_cmd_draw_stop, nil)
+    end
     if self.bb then
         self.bb:free()
         self.bb = nil

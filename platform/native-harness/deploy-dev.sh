@@ -34,6 +34,9 @@ $ADB shell "mkdir -p $TMP" >/dev/null
 $ADB shell "mkdir -p $TMP/libs" >/dev/null
 $ADB push koreader-native "$TMP/koreader-native" >/dev/null
 $ADB push detach "$TMP/detach" >/dev/null
+if [ -f libnativeko-dns.so ]; then
+    $ADB push libnativeko-dns.so "$TMP/libnativeko-dns.so" >/dev/null
+fi
 
 # Generic session core + host/wifi drivers + generated profile.
 $ADB shell "mkdir -p $TMP/drivers/host $TMP/drivers/wifi $TMP/drivers/pm $TMP/profiles/$PROFILE_ID" >/dev/null
@@ -42,7 +45,6 @@ $ADB push "$ROOT/platform/native/core/start-session.sh" "$TMP/start-session.sh" 
 $ADB push "$ROOT/platform/native/drivers/host/." "$TMP/drivers/host/" >/dev/null
 $ADB push "$ROOT/platform/native/drivers/wifi/." "$TMP/drivers/wifi/" >/dev/null
 $ADB push "$ROOT/platform/native/drivers/pm/." "$TMP/drivers/pm/" >/dev/null
-$ADB shell "su -c 'rm -f $TMP/drivers/host/fb_ack.sh $TMP/drivers/pm/fb_ack.sh $TMP/drivers/pm/android_early_suspend.sh'" >/dev/null
 $ADB push "$PROFILE_OUT/profile.env" "$TMP/profiles/$PROFILE_ID/profile.env" >/dev/null
 $ADB push "$PROFILE_OUT/profile.lua" "$TMP/profiles/$PROFILE_ID/profile.lua" >/dev/null
 $ADB push "$PROFILE_OUT/profile.lua" "$TMP/profile.lua" >/dev/null

@@ -34,7 +34,7 @@ public class MainActivity extends Activity {
     private static final String TAG = "NativeKO";
 
     /** Bump this whenever the embedded assets change. */
-    private static final String ASSET_VERSION = "13";
+    private static final String ASSET_VERSION = "14";
 
     private TextView status;
     private final Handler handler = new Handler();
@@ -140,7 +140,8 @@ public class MainActivity extends Activity {
         }
         bin.setExecutable(true, false);
         String[] scripts = { "run-native.sh", "restore-android.sh",
-                "session.sh", "start-session.sh", "detach" };
+                "session.sh", "start-session.sh", "detach",
+                "drivers/wifi/udhcpc.sh" };
         for (String s : scripts) {
             new File(nativeDir, s).setExecutable(true, false);
         }

@@ -4,7 +4,11 @@
 通用驱动方式。它不是某一个机型的私有做法：任何把扫描缓冲暴露在 `/dev/ebc` 的
 RK29/RK30/RK3288 设备都可以按同样步骤探测、标定并接入 NativeKO。
 
-已验证参考机型：**Onyx NoteS / 超星 NoteSL（RK3288，Android 6.0.1，kernel 3.10）**。
+已验证参考机型：
+- **Onyx NoteS / 超星 NoteSL**（RK3288，Android 6.0.1，kernel 3.10）；
+- **博阅 Likebook Alita（K103）**（RK3368，Android 8.1，kernel 4.4；8bpp +
+  5-bit 灰度、原厂 gamma LUT）。K103 的完整记录见
+  [`K103_ALITA.md`](K103_ALITA.md)；K103 与 NoteSL 是不同设备。
 
 ---
 

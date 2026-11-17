@@ -4,11 +4,14 @@ NativeKO is a self-contained Android APK that launches KOReader natively
 **without the Android framework**: it stops `zygote`/`SurfaceFlinger` and
 runs KOReader directly on the device's e-ink framebuffer and evdev input.
 
-The shipped reference profile is **Onyx NoteS / 超星 NoteSL** (Rockchip
-RK3288 + Rockchip EBC direct `/dev/ebc` buffer); the same APK build supports
-other devices by selecting a profile (`PROFILE_ID`), e.g. the Likebook T65A
-(i.MX6 EPDC).  RK EBC ports use the `rk_ebc` display backend and the probe /
-calibration procedure in `platform/native/RK_EBC.md`.
+The reference profiles are **博阅 Likebook Alita (K103)** (RK3368,
+1872×1404 direct `/dev/ebc`, 8bpp + 5-bit grayscale, dual frontlight,
+hardware suspend, native Wi-Fi/DNS) and **Onyx NoteS / 超星 NoteSL**
+(RK3288, 1200×825 EBC).  The build selects one with `PROFILE_ID` (`alita`,
+`notesl`, `t65a`); K103 and NoteSL are different machines.  RK EBC ports use
+the `rk_ebc` display backend and the probe / calibration procedure in
+`platform/native/RK_EBC.md`; the full K103 adaptation log is in
+`platform/native/K103_ALITA.md`.
 
 The APK contains everything it needs:
 
@@ -25,6 +28,14 @@ extracted into the app's private data directory.  Every start then runs
 `run-native.sh` as root via `su`.
 
 ## Current behaviour
+
+The K103/Alita profile (`alita`) drives `/dev/ebc` with the vendor POST path
+(8bpp, 5-bit codes, original gamma LUT), maps KOReader refresh types to
+EPD_FULL/REGLA/FORCE_FULL/FAST/A2, exposes dual cold/warm frontlight, and uses
+Android 8 `mem` suspend.  Wi-Fi uses the ROM's `wpa_supplicant` service plus
+Magisk busybox `udhcpc`; an `LD_PRELOAD` resolver shim provides DNS while the
+framework (and netd's DNS proxy) is stopped.  See
+[`../native/K103_ALITA.md`](../native/K103_ALITA.md) for the full record.
 
 The shipped NoteSL profile performs real hardware suspend through
 `power.model = "android_wakeup_count"` (Android 6 wakelock/wakeup_count):
@@ -68,11 +79,11 @@ Requirements:
 
 ```sh
 ADB=/mnt/c/tools/android-sdk/platform-tools/adb.exe \
-  PROFILE_ID=notesl bash platform/android/nativeko/build.sh
+  PROFILE_ID=alita bash platform/android/nativeko/build.sh
 ```
 
-`PROFILE_ID` defaults to `notesl`; use `PROFILE_ID=t65a` for the Likebook
-T65A build.
+`PROFILE_ID` defaults to `notesl`; K103/Alita uses `alita`, T65A uses `t65a`.
+The launcher icon is line-art **NKO** (`platform/android/nativeko/res/mipmap-*`).
 
 The script:
 

@@ -1,0 +1,161 @@
+{
+  "id": "alita",
+  "model": "Likebook Alita (K103)",
+  "match": {
+    "product": "alita",
+    "brand": "boyue"
+  },
+  "display": {
+    "fb": "/dev/graphics/fb0",
+    "blank": "/sys/class/graphics/fb0/blank",
+    "pan": "/sys/class/graphics/fb0/pan",
+    "pan_value": "0,0",
+    "backend": "rk_ebc",
+    "portrait": true,
+    "touch_rotation": 0,
+    "dpi": 240,
+    "needs_refresh_after_resume": false,
+    "can_hw_invert": false,
+    "can_hw_dither": false,
+    "ebc_device": "/dev/ebc",
+    "ebc_width": 1872,
+    "ebc_height": 1404,
+    "ebc_bpp": 8,
+    "ebc_stride": 1872,
+    "ebc_offset": 0,
+    "ebc_rotate": 0,
+    "ebc_enabled": true,
+    "ebc_send_initial": true,
+    "ebc_send_buffer_each": true,
+    "ebc_epd_mode": 1,
+    "ebc_cmd_send_buffer": 28673,
+    "ebc_cmd_send_update": 28684,
+    "ebc_rect_order": "yxwh",
+    "ebc_waveform_full": 2,
+    "ebc_update_mode_full": 1,
+    "ebc_waveform_partial": 2,
+    "ebc_update_mode_partial": 0,
+    "ebc_waveform_fast": 1,
+    "ebc_update_mode_fast": 0,
+    "ebc_flags": 135168,
+    "ebc_unknown_1c": 4096,
+    "ebc_vendor_post": true,
+    "ebc_cmd_get_buffer": 28672,
+    "ebc_cmd_draw_enable": 28680,
+    "ebc_cmd_draw_stop": 28678,
+    "ebc_epd_mode_full": 1,
+    "ebc_epd_mode_partial": 15,
+    "ebc_epd_mode_fast": 18,
+    "ebc_map_len": 12582912,
+    "ebc_gray_shift": 3,
+    "ebc_gray_max": 30,
+    "ebc_epd_mode_ui": 3,
+    "ebc_epd_mode_flash": 11,
+    "ebc_epd_mode_a2": 2,
+    "ebc_epd_mode_dither": 100,
+    "ebc_gamma_level": 14,
+    "ebc_screensaver_mode": false
+  },
+  "input": {
+    "devices": [
+      "/dev/input/event0",
+      "/dev/input/event1",
+      "/dev/input/event4"
+    ],
+    "keys": {
+      "116": "Power",
+      "158": "Back"
+    },
+    "quirks": [
+      "power_down_only"
+    ],
+    "touch_max_x": 1403,
+    "touch_max_y": 1871
+  },
+  "power": {
+    "battery_capacity": "/sys/class/power_supply/battery/capacity",
+    "battery_status": "/sys/class/power_supply/battery/status",
+    "frontlight": "/sys/class/backlight/rk28_bl/brightness",
+    "fl_min": 0,
+    "fl_max": 255,
+    "model": "android_wakeup_count",
+    "frontlight_warm": "/sys/class/backlight/rk28_bl_warm/brightness",
+    "fl_warmth_min": 0,
+    "fl_warmth_max": 100,
+    "suspend_state": "mem",
+    "suspend_wait_timeout": 2,
+    "wake_lock_name": "nativeko",
+    "wake_unlock": [
+      "PowerManagerService.Display",
+      "PowerManagerService.WakeLocks",
+      "KeyEvents"
+    ],
+    "rtc_alarm": "/sys/class/rtc/rtc0/wakealarm",
+    "wifi_keep_on_suspend": false
+  },
+  "network": {
+    "manage": true,
+    "start_on_boot": false,
+    "iface": "wlan0",
+    "backend": "wpa_supplicant_android",
+    "ctrl_dir": "/data/misc/wifi/sockets",
+    "service": "wpa_supplicant",
+    "dhcp_service": "",
+    "dhcp_cmd": "",
+    "dhcp_flags": "",
+    "driver_module": "",
+    "android_props": true,
+    "service_prop": "init.svc.wpa_supplicant",
+    "dhcp_kind": "udhcpc",
+    "dhcp_busybox": "/data/adb/magisk/busybox",
+    "driver_ko": "",
+    "driver_args": "",
+    "selinux_allow": [
+      "allow hal_wifi_supplicant_default magisk unix_dgram_socket sendto"
+    ],
+    "dns": [
+      "223.5.5.5",
+      "1.1.1.1"
+    ]
+  },
+  "host": {
+    "backend": "android_init",
+    "stop": [
+      "zygote",
+      "zygote_secondary",
+      "surfaceflinger",
+      "media",
+      "drm",
+      "installd",
+      "keystore",
+      "ril-daemon",
+      "boyuedrawserver",
+      "hwcomposer-2-1"
+    ],
+    "start": [
+      "hwcomposer-2-1",
+      "boyuedrawserver",
+      "surfaceflinger",
+      "media",
+      "drm",
+      "installd",
+      "keystore",
+      "ril-daemon",
+      "zygote_secondary",
+      "zygote"
+    ],
+    "governor_native": "interactive",
+    "governor_fallback": "conservative"
+  },
+  "paths": {
+    "data_dir": "/sdcard/koreader",
+    "home_dir": "/sdcard/Books"
+  },
+  "tools": {
+    "ip": "/system/bin/ip",
+    "ping": "/system/bin/ping",
+    "setsid": "/system/bin/toybox setsid",
+    "getprop": "getprop",
+    "busybox": "/system/bin/toybox"
+  }
+}

@@ -18,6 +18,27 @@ else
     NET_CTRL_SOCK=""
 fi
 NET_DHCP_LOG="${TMP:-${NATIVE_DIR:-/data/local/tmp/nativeko}}/dhcpcd.log"
+NET_DHCP_KIND="${NET_DHCP_KIND:-dhcpcd}"
+NET_DHCP_BUSYBOX="${NET_DHCP_BUSYBOX:-}"
+NET_SELINUX_ALLOW="${NET_SELINUX_ALLOW:-}"
+
+# Apply profile-supplied SELinux allow rules (pipe-separated).  e.g. Android 8
+# wpa_supplicant is in hal_wifi_supplicant_default and cannot send replies to
+# a root/magisk wpa_ctrl client without this targeted rule.
+_net_selinux_allow() {
+    [ -n "$NET_SELINUX_ALLOW" ] || return 0
+    command -v magiskpolicy >/dev/null 2>&1 || return 0
+    _old_ifs="$IFS"
+    IFS='|'
+    for _rule in $NET_SELINUX_ALLOW; do
+        [ -n "$_rule" ] || continue
+        if magiskpolicy --live "$_rule" 2>/dev/null; then
+            echo "selinux_allow: $_rule" >>"$NET_DHCP_LOG"
+        fi
+    done
+    IFS="$_old_ifs"
+    return 0
+}
 
 _net_service_state() {
     getprop "init.svc.$NET_SERVICE" 2>/dev/null
@@ -83,9 +104,35 @@ _net_install_routes() {
     return 0
 }
 
+_net_release_dhcp() {
+    if [ "$NET_DHCP_KIND" = "udhcpc" ]; then
+        if [ -n "$NET_DHCP_BUSYBOX" ]; then
+            "$NET_DHCP_BUSYBOX" pkill -f "udhcpc -i $NET_IFACE" 2>/dev/null
+        fi
+        ip addr flush dev "$NET_IFACE" 2>/dev/null
+        ip route del default dev "$NET_IFACE" 2>/dev/null
+        return 0
+    fi
+    [ -n "$NET_DHCP_CMD" ] && "$NET_DHCP_CMD" -k "$NET_IFACE" 2>/dev/null
+    return 0
+}
+
 _net_start_dhcp() {
-    "$NET_DHCP_CMD" -k "$NET_IFACE" 2>/dev/null
-    $BB setsid "$NET_DHCP_CMD" $NET_DHCP_FLAGS "$NET_IFACE" >"$NET_DHCP_LOG" 2>&1 &
+    _net_release_dhcp
+    if [ "$NET_DHCP_KIND" = "udhcpc" ]; then
+        if [ -z "$NET_DHCP_BUSYBOX" ]; then
+            echo "wifi: udhcpc requested but dhcp_busybox is empty" \
+                >>"$NET_DHCP_LOG"
+            return 1
+        fi
+        # Foreground, one-shot lease.  The init service may have left the
+        # interface without an address; udhcpc writes it through its script.
+        "$NET_DHCP_BUSYBOX" udhcpc -i "$NET_IFACE" \
+            -s "$NATIVE_DIR/drivers/wifi/udhcpc.sh" \
+            -f -q -n -t 5 -T 3 >>"$NET_DHCP_LOG" 2>&1
+        return $?
+    fi
+    $BB setsid "$NET_DHCP_CMD" $NET_DHCP_FLAGS "$NET_IFACE" >>"$NET_DHCP_LOG" 2>&1 &
 }
 
 wifi_dhcp() {
@@ -206,6 +253,7 @@ wifi_suspend() {
 }
 
 wifi_up() {
+    _net_selinux_allow
     wifi_load
 
     if [ -e /dev/rfkill ]; then
@@ -242,12 +290,12 @@ wifi_up() {
 }
 
 wifi_release() {
-    "$NET_DHCP_CMD" -k "$NET_IFACE" 2>/dev/null
+    _net_release_dhcp
     return 0
 }
 
 wifi_down() {
-    "$NET_DHCP_CMD" -k "$NET_IFACE" 2>/dev/null
+    _net_release_dhcp
     [ -n "${NET_SERVICE:-}" ] && setprop ctl.stop "$NET_SERVICE" 2>/dev/null
     [ -n "${NET_DHCP_SERVICE:-}" ] && setprop ctl.stop "$NET_DHCP_SERVICE" 2>/dev/null
     ip link set "$NET_IFACE" down 2>/dev/null

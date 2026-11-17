@@ -3,20 +3,24 @@
 **一个“原生 KOReader 移植框架 + 参考机型实现”的项目。**
 
 NativeKO 不是给某一台设备写死的 App：核心是一套 profile/driver 驱动的移植
-框架，`platform/native/profiles/` 里的每个 profile 描述一台设备。当前带两个
+框架，`platform/native/profiles/` 里的每个 profile 描述一台设备。当前带三个
 参考实现：
 
-- **Onyx NoteS / 超星 NoteSL**（默认，直接控制 Rockchip EBC，实现硬件
-  suspend）；
-- **Likebook T65A**（i.MX6 EPDC，screensaver-only 示例）。
+- **博阅 Likebook Alita（K103）**：RK3368、Android 8.1、1872×1404 EBC
+  直显（8bpp + 5-bit 灰度）、双色温前光、硬件 suspend、原生 Wi-Fi/DNS；
+- **Onyx NoteS / 超星 NoteSL**：RK3288、1200×825 EBC 直显、硬件 suspend；
+  注意 K103 与 NoteSL 是两台不同设备；
+- **Likebook T65A**：i.MX6 EPDC，screensaver-only 示例。
 
 你可以保留框架，替换 profile 和少量平台驱动，把它移植到其他电子墨水设备；
 具体步骤见 [`platform/native/PORTING.md`](platform/native/PORTING.md)，
-Rockchip EBC 设备另见 [`platform/native/RK_EBC.md`](platform/native/RK_EBC.md)。
+Rockchip EBC 设备另见 [`platform/native/RK_EBC.md`](platform/native/RK_EBC.md)；
+K103/Alita 的完整适配记录见
+[`platform/native/K103_ALITA.md`](platform/native/K103_ALITA.md)。
 
 English one-liner: a profile/driver-based porting framework for running
-KOReader natively on e-ink devices, shipping an Onyx NoteS/NoteSL reference
-(direct Rockchip EBC + hardware suspend) and a Likebook T65A example.
+KOReader natively on e-ink devices, shipping Rockchip EBC references
+(Likebook Alita K103 / NoteSL) and a Likebook T65A example.
 
 ---
 
@@ -63,6 +67,10 @@ KOReader natively on e-ink devices, shipping an Onyx NoteS/NoteSL reference
 
 ### 参考实现
 
+- **Likebook Alita（K103）**：`platform/native/profiles/alita/profile.json`，
+  RK3368，`/dev/ebc` 直显（1872×1404，8bpp，5-bit 灰度），原厂 gamma LUT、
+  EPD_FULL/REGLA/FORCE_FULL/FAST/A2 模式、双色温前光、硬件 suspend、
+  wpa_supplicant + `udhcpc` + DNS shim；
 - **NoteSL**：`platform/native/profiles/notesl/profile.json`，Rockchip EBC
   直显（`/dev/ebc`，1200×825，32bpp）、触摸交换/镜像 quirk、
   `android_wakeup_count` 硬件 suspend、mmc1 unbind；
@@ -76,22 +84,25 @@ KOReader natively on e-ink devices, shipping an Onyx NoteS/NoteSL reference
 
 ## 2. 能达到的效果
 
-在 NoteSL（默认 profile）上：
+在 K103 / Alita（`PROFILE_ID=alita`）上：
 
 - **一键启动**：安装 NativeKO APK，点一下即可；
 - **绕过 Android framework**：停止 `zygote`/`SurfaceFlinger` 等，KOReader
-  直接 mmap `/dev/ebc` 并提交 `SEND_BUFFER`/`SEND_UPDATE`，显示完全不经过
-  SurfaceFlinger/hwcomposer；
+  直接 mmap `/dev/ebc` 并提交 `SEND_BUFFER`（K103：8bpp + 5-bit 灰度码 +
+  原厂 gamma LUT），显示完全不经过 SurfaceFlinger/hwcomposer；
 - **自包含**：APK 内含 KOReader Lua 模块、原生库、native 启动器、
   session/driver/profile；运行时不需要 Android KOReader App；
 - **设置/插件/补丁共享**：使用 `/sdcard/koreader`（`KO_DATA_DIR`），
   和 Android KOReader 一样；
 - **真实硬件 suspend**：电源键屏保后写 `mem` 进入 suspend，再按电源键唤醒
-  并全刷；session wake lock、旧 framework 锁清理、RTC 旧 alarm 清理和
-  mmc1 unbind 都已处理；
-- **前光省电**：屏保显示时前光降到最低，唤醒时恢复；
-- **Wi-Fi 控制**：启动时默认不自动开 Wi-Fi；屏保/suspend 时关闭，唤醒时
-  如果之前是开的会恢复；菜单里可以手动开/关；
+  并重绘；session wake lock、旧 framework 锁清理、RTC 旧 alarm 清理都已
+  处理；K103 还会停掉残留的 `zygote_secondary`/`boyuedrawserver`/
+  `hwcomposer`，NoteSL 额外处理 mmc1 unbind；
+- **前光**：K103 支持冷/暖双色温（两个 `rk28_bl*` 节点）；屏保时降到底，
+  唤醒恢复；
+- **Wi-Fi/DNS**：启动时默认不自动开 Wi-Fi；K103 使用 ROM 的
+  `wpa_supplicant` + busybox `udhcpc`，并用 `LD_PRELOAD` DNS shim 在 framework
+  停止时解析域名；
 - **关机选项**：KOReader 退出菜单里的 Power off 会执行 `sync` +
   `/system/bin/reboot -p`；
 - **稳定切换**：suspend/resume 进行中忽略新的电源键事件，避免连按导致
@@ -122,11 +133,13 @@ adb shell su -c 'pm install -r /data/local/tmp/NativeKO.apk'
 
 ### 3.3 日常操作
 
-- **电源键（NoteSL）**：显示屏保；约 2 秒后停止 Wi-Fi 并进入 suspend；
-  再按电源键唤醒，关闭屏保、恢复 Wi-Fi/前光并全刷；
+- **电源键（K103/NoteSL）**：显示屏保；约 2 秒后停止 Wi-Fi 并进入 suspend；
+  再按电源键唤醒，关闭屏保、恢复 Wi-Fi/前光并重绘；唤醒键被内核吃掉时由
+  Device 主动恢复 UI；
 - **电源键（T65A）**：只显示/关闭屏保，不进入硬件 suspend；
 - **触摸**：不会关闭屏保；屏保只由电源键关闭；
-- **连按电源键**：suspend/resume 和恢复全刷完成前的按键会被忽略；
+- **连按电源键**：suspend/resume 状态转换期间的按键会被忽略；失败/中止的
+  suspend 会回到屏保，不会卡住状态机；
 - **前光**：屏保/suspend 时变暗，唤醒时恢复；
 - **Wi-Fi**：KOReader 网络菜单；启动默认关闭，可手动开启；屏保/suspend
   时关闭，唤醒时如果之前是开的会恢复；
@@ -171,10 +184,12 @@ adb shell su -c 'pm install -r /data/local/tmp/NativeKO.apk'
 
 ```sh
 ADB=/mnt/c/tools/android-sdk/platform-tools/adb.exe \
-  PROFILE_ID=notesl bash platform/android/nativeko/build.sh
+  PROFILE_ID=alita bash platform/android/nativeko/build.sh
 ```
 
-`PROFILE_ID` 默认就是 `notesl`；T65A 用 `PROFILE_ID=t65a`。
+`PROFILE_ID` 默认是 `notesl`；K103/Alita 用 `alita`，T65A 用 `t65a`。
+APK 启动器图标是线条风 **NKO**，资源在
+`platform/android/nativeko/res/mipmap-*`。
 
 输出：`platform/android/nativeko/NativeKO.apk`。
 
@@ -238,9 +253,9 @@ COPYING                      AGPL-3.0
 
 ## 7. 当前限制
 
-- 当前验证过 NoteSL（Rockchip EBC + 硬件 suspend）和 T65A（i.MX6 EPDC，
-  screensaver-only）；其他设备需要按 PORTING.md 添加 profile/driver/显示
-  后端；
+- 当前验证过 NoteSL、K103/Alita（Rockchip EBC + 硬件 suspend + Wi-Fi/DNS）
+  和 T65A（i.MX6 EPDC，screensaver-only）；其他设备需要按 PORTING.md 添加
+  profile/driver/显示后端；
 - framework 停止后没有 netd，域名解析可能不可用；驱动会配置默认路由和
   `net.dns1` 保证 IP 连通，但不要依赖 `ndc` 等平台工具；
 - Android 打包层假定可 `su` 并能停止 init 服务；非 Android 设备可直接用

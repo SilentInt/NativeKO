@@ -47,6 +47,7 @@ local setsid_cmd = tools.setsid or "setsid"
 local getprop_cmd = tools.getprop or "getprop"
 
 local has_frontlight = pw.frontlight ~= nil and pw.frontlight ~= ""
+local has_warm = pw.frontlight_warm ~= nil and pw.frontlight_warm ~= ""
 local has_network = net.manage == true
 
 local Device = Generic:extend{
@@ -61,9 +62,12 @@ local Device = Generic:extend{
     canHWDither = (disp.can_hw_dither ~= false) and yes or no,
 
     hasFrontlight = has_frontlight and yes or no,
-    hasNaturalLight = no,
-    hasNaturalLightMixer = no,
-    frontlight_settings = has_frontlight and { frontlight_white = pw.frontlight } or nil,
+    hasNaturalLight = has_warm and yes or no,
+    hasNaturalLightMixer = has_warm and yes or no,
+    frontlight_settings = has_frontlight and {
+        frontlight_white = pw.frontlight,
+        frontlight_warm = pw.frontlight_warm,
+    } or nil,
 
     hasWifiManager = has_network and yes or no,
     hasWifiToggle = has_network and yes or no,
@@ -103,6 +107,7 @@ local function getFramebufferModule()
 end
 
 function Device:init()
+    self._power_state = "awake"
     local backend = disp.backend or "mxcfb"
     -- Rockchip EBC drives the panel from /dev/ebc's own buffer, not fb0.
     local device_node = disp.fb or "/dev/graphics/fb0"
@@ -136,6 +141,25 @@ function Device:init()
         ebc_update_mode_fast = disp.ebc_update_mode_fast,
         ebc_flags = disp.ebc_flags,
         ebc_unknown_1c = disp.ebc_unknown_1c,
+        -- Vendor HWC refresh path (Likebook Alita): acquire a buffer with
+        -- GET_BUFFER, write 8bpp codes, then SEND_BUFFER with an epd_mode.
+        ebc_vendor_post = disp.ebc_vendor_post,
+        ebc_cmd_get_buffer = disp.ebc_cmd_get_buffer,
+        ebc_cmd_draw_enable = disp.ebc_cmd_draw_enable,
+        ebc_cmd_draw_stop = disp.ebc_cmd_draw_stop,
+        ebc_epd_mode_full = disp.ebc_epd_mode_full,
+        ebc_epd_mode_partial = disp.ebc_epd_mode_partial,
+        ebc_epd_mode_ui = disp.ebc_epd_mode_ui,
+        ebc_epd_mode_flash = disp.ebc_epd_mode_flash,
+        ebc_epd_mode_fast = disp.ebc_epd_mode_fast,
+        ebc_epd_mode_a2 = disp.ebc_epd_mode_a2,
+        ebc_epd_mode_dither = disp.ebc_epd_mode_dither,
+        ebc_epd_mode_screensaver = disp.ebc_epd_mode_screensaver,
+        ebc_screensaver_mode = disp.ebc_screensaver_mode,
+        ebc_map_len = disp.ebc_map_len,
+        ebc_gray_shift = disp.ebc_gray_shift,
+        ebc_gray_max = disp.ebc_gray_max,
+        ebc_gamma_level = disp.ebc_gamma_level,
     }
 
     -- KOReader convention (c.f. PocketBook): the total touch rotation is the
@@ -440,25 +464,39 @@ function Device:saveSettings()
     self.powerd:saveSettings()
 end
 
--- Enter/leave hardware suspend through the profile-selected driver.  The
--- state write blocks until the kernel resumes, so Device:suspend() only
--- returns after wakeup.
+-- Power state machine: awake -> screensaver -> suspending -> resuming -> awake
+-- One explicit state is used instead of several overlapping busy booleans.
+function Device:_setPowerState(state)
+    if self._power_state ~= state then
+        logger.info(string.format("device/native: power state %s -> %s",
+            tostring(self._power_state), state))
+        self._power_state = state
+    end
+end
+
+-- Enter hardware suspend.  The driver returns only after the kernel resumes
+-- (or after the request was rejected/aborted).
 function Device:suspend()
-    if self.suspend_driver then
-        self._suspend_in_progress = true
-        self._resume_pending_wake = false
-        local ok = self.suspend_driver.suspend(self, pw, disp, net)
-        -- The state write returned: the kernel either resumed or aborted the
-        -- request.  Either way the resume UI is now responsible for closing
-        -- the screensaver; stay busy and ignore further power keys until it
-        -- has finished (including the full repaint).
-        self._suspend_in_progress = false
-        self._resume_in_progress = true
-        self._resume_pending_wake = true
+    if not self.suspend_driver or self._power_state ~= "screensaver" then
+        return false
+    end
+    self:_setPowerState("suspending")
+    local ok, reason = self.suspend_driver.suspend(self, pw, disp, net)
+    logger.info(string.format(
+        "device/native: suspend driver returned ok=%s reason=%s",
+        tostring(ok), tostring(reason)))
+    if reason == "usb" or not ok then
+        -- Charging or a failed/aborted request: stay in the screensaver.
+        -- The next power key closes it; no resume-busy state is entered.
+        self:_setPowerState("screensaver")
         return ok
     end
-    logger.info("device/native: suspend disabled (screensaver only)")
-    return false
+    -- The kernel slept and the driver returned after wakeup.  Always drive
+    -- the resume UI from here; never depend on the wake key being delivered.
+    self:_setPowerState("resuming")
+    local UIManager = require("ui/uimanager")
+    UIManager:scheduleIn(0, self._resumeUI, self, true)
+    return true
 end
 
 function Device:resume()
@@ -466,6 +504,40 @@ function Device:resume()
         return self.suspend_driver.resume(self, pw, disp, net)
     end
     logger.info("device/native: screensaver closed (no suspend)")
+end
+
+-- Common resume path: close the screensaver, restore frontlight/Wi-Fi, and
+-- repaint if the profile asks for it.  from_suspend runs the PM driver's
+-- resume hook; closing a plain screensaver does not need it.
+function Device:_resumeUI(from_suspend)
+    if self._power_state ~= "resuming" then return end
+    local UIManager = require("ui/uimanager")
+    local Screensaver = require("ui/screensaver")
+    UIManager:unschedule(self.suspend)
+    if from_suspend then
+        self:resume()
+    end
+    local function finish_resume()
+        logger.info("device/native: resume UI finished")
+        self:_setPowerState("awake")
+    end
+    local widget_was_closed = Screensaver:close()
+    if widget_was_closed and self:needsScreenRefreshAfterResume() then
+        UIManager:scheduleIn(1, function()
+            self.screen:refreshFull(0, 0,
+                self.screen:getWidth(), self.screen:getHeight())
+            finish_resume()
+        end)
+    else
+        -- Let the close repaint run once before accepting new power keys.
+        UIManager:scheduleIn(0.1, finish_resume)
+    end
+    self.powerd:afterResume()
+    if self._wifi_was_on_before_screensaver then
+        local NetworkMgr = require("ui/network/manager")
+        NetworkMgr:restoreWifiAsync()
+        self._wifi_was_on_before_screensaver = false
+    end
 end
 
 function Device:rescheduleSuspend(delay)
@@ -489,80 +561,68 @@ function Device:powerOff()
     end
 end
 
--- Power-key handling: show the screensaver, then suspend after a short delay
--- (so the panel has painted it).  The resume power key closes the screensaver
--- and restores Wi-Fi/frontlight.
 function Device:onPowerEvent(ev)
     local UIManager = require("ui/uimanager")
     local Screensaver = require("ui/screensaver")
+    logger.info(string.format(
+        "device/native: onPowerEvent ev=%s state=%s saver=%s",
+        tostring(ev), tostring(self._power_state),
+        tostring(self.screen_saver_mode)))
 
-    if self.screen_saver_mode then
-        if ev == "Power" or ev == "Resume" then
-            -- The suspend driver is still blocked in the kernel; nothing
-            -- should be dispatching input here, but be defensive.
-            if self._suspend_in_progress then
-                return
-            end
-            self._resume_pending_wake = false
-            self._resume_in_progress = true
-            UIManager:unschedule(self.suspend)
-            self:resume()
-            local function finish_resume()
-                self._resume_in_progress = false
-            end
-            local widget_was_closed = Screensaver:close()
-            if widget_was_closed and self:needsScreenRefreshAfterResume() then
-                UIManager:scheduleIn(1, function()
-                    self.screen:refreshFull(0, 0,
-                        self.screen:getWidth(), self.screen:getHeight())
-                    finish_resume()
-                end)
-            else
-                finish_resume()
-            end
-            self.powerd:afterResume()
-            if self._wifi_was_on_before_screensaver then
-                local NetworkMgr = require("ui/network/manager")
-                NetworkMgr:restoreWifiAsync()
-                self._wifi_was_on_before_screensaver = false
-            end
-        end
+    if ev ~= "Power" and ev ~= "Suspend" and ev ~= "Resume" then
         return
     end
 
-    -- Do not start a new suspend/wake until the previous suspend/resume
-    -- transition (and its repaint) has fully completed.
-    if self._suspend_in_progress or self._resume_in_progress then
-        logger.dbg("device/native: power event ignored (suspend/resume in progress)")
+    -- Ignore new keys while the driver is in the kernel or while the resume
+    -- UI is closing the screensaver/repainting.  This is tied to the actual
+    -- transition, not a timed key lockout.
+    if self._power_state == "suspending" or self._power_state == "resuming" then
+        logger.dbg("device/native: power event ignored in state "
+            .. self._power_state)
         return
     end
 
-    if ev == "Power" or ev == "Suspend" then
-        -- Touch must not dismiss the screensaver on this device; only the
-        -- power key (this handler) closes it.
-        local ok, ScreenSaverWidget = pcall(require, "ui/widget/screensaverwidget")
-        if ok and ScreenSaverWidget then
-            ScreenSaverWidget.onTap = function() end
-        end
-        Screensaver:setup()
-        Screensaver:show()
-        if self:needsScreenRefreshAfterResume() then
-            self.screen:refreshFull(0, 0,
-                self.screen:getWidth(), self.screen:getHeight())
-        end
-        UIManager:forceRePaint()
-        -- The screensaver is our "sleep" state: turn Wi-Fi off, and restore it
-        -- when the power key closes the screensaver.
-        if self:hasWifiToggle() then
-            local NetworkMgr = require("ui/network/manager")
-            self._wifi_was_on_before_screensaver = NetworkMgr:isWifiOn()
-            if self._wifi_was_on_before_screensaver then
-                NetworkMgr:disableWifi()
-            end
-        end
-        self.powerd:beforeSuspend()
-        self:rescheduleSuspend(self.suspend_wait_timeout)
+    if self._power_state == "screensaver" then
+        -- Cancel a suspend that has not started yet, then close the
+        -- screensaver.  No PM driver call is needed here.
+        UIManager:unschedule(self.suspend)
+        self:_setPowerState("resuming")
+        UIManager:scheduleIn(0, self._resumeUI, self, false)
+        return
     end
+
+    -- awake: show the screensaver, then suspend after the panel has painted.
+    local ok, ScreenSaverWidget = pcall(require, "ui/widget/screensaverwidget")
+    if ok and ScreenSaverWidget then
+        ScreenSaverWidget.onTap = function() end
+    end
+    Screensaver:setup()
+    Screensaver:show()
+    if not (self.screen.ebc_screensaver_mode and self.screen.refreshScreensaver)
+        and self:needsScreenRefreshAfterResume() then
+        self.screen:refreshFull(0, 0,
+            self.screen:getWidth(), self.screen:getHeight())
+    end
+    UIManager:forceRePaint()
+    if self.screen.ebc_screensaver_mode and self.screen.refreshScreensaver then
+        UIManager:scheduleIn(0.2, function()
+            self.screen:refreshScreensaver()
+        end)
+    end
+    -- Keep Wi-Fi only on profiles where the radio cannot wake the SoC.
+    local keep_wifi = pw.wifi_keep_on_suspend == true
+    if self:hasWifiToggle() and not keep_wifi then
+        local NetworkMgr = require("ui/network/manager")
+        self._wifi_was_on_before_screensaver = NetworkMgr:isWifiOn()
+        if self._wifi_was_on_before_screensaver then
+            NetworkMgr:disableWifi()
+        end
+    else
+        self._wifi_was_on_before_screensaver = false
+    end
+    self.powerd:beforeSuspend()
+    self:_setPowerState("screensaver")
+    self:rescheduleSuspend(self.suspend_wait_timeout)
 end
 
 return Device

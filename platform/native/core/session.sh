@@ -101,8 +101,15 @@ else
     LIB_DIR="/data/data/org.koreader.launcher/lib"
     if [ ! -d "$LIB_DIR" ]; then
         LIB_DIR=""
-        for d in /data/app-lib/org.koreader.launcher-*; do
-            [ -d "$d" ] && LIB_DIR="$d" && break
+        # Android 4.x uses /data/app-lib, Android 8+ uses
+        # /data/app/<pkg>-<hash>/lib/<abi>.
+        for d in /data/app-lib/org.koreader.launcher-* \
+                 /data/app/org.koreader.launcher-*/lib/arm \
+                 /data/app/org.koreader.launcher-*/lib/arm64; do
+            if [ -d "$d" ]; then
+                LIB_DIR="$d"
+                break
+            fi
         done
     fi
     if [ -z "$LIB_DIR" ]; then
@@ -285,4 +292,14 @@ fi
 
 cd "$KO_HOME" || exit 1
 echo "session.sh: starting $BIN (profile=$PROFILE_ID KO_HOME=$KO_HOME KO_DATA_DIR=$KO_DATA_DIR)" >&2
-"$BIN"
+
+# Without the Android framework there is no netd DNS proxy configuration.
+# The shim resolves directly over UDP using NET_DNS (or net.dns1/223.5.5.5).
+DNS_SHIM="$NATIVE_DIR/libnativeko-dns.so"
+if [ -f "$DNS_SHIM" ] && [ -n "${NET_DNS:-}" ]; then
+    KO_NATIVE_DNS="${NET_DNS:-}" \
+    LD_PRELOAD="$DNS_SHIM${LD_PRELOAD:+:$LD_PRELOAD}" \
+        "$BIN"
+else
+    KO_NATIVE_DNS="${NET_DNS:-}" "$BIN"
+fi

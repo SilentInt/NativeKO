@@ -3,7 +3,7 @@
 The generic orchestration lives in `platform/native/`:
 
 - `profiles/<id>/profile.json` — device data, single source of truth
-  (`t65a` and `notesl` are the reference profiles)
+  (`alita`, `notesl` and `t65a` are the reference profiles)
 - `core/session.sh`, `core/start-session.sh` — lifecycle + detached launch
 - `drivers/host/*.sh` — Android init service backend (or `none`)
 - `drivers/pm/*.sh` — session-side power model (`notesl` ships
@@ -11,6 +11,10 @@ The generic orchestration lives in `platform/native/`:
   screensaver-only)
 - `drivers/wifi/*.sh` — Wi-Fi backend
 - `common/lj-wpaclient/` — shared pure-Lua wpa_supplicant client
+- `common/dns-resolver.c`, `tools/build-dns-resolver.sh` — `LD_PRELOAD`
+  `getaddrinfo` shim used when netd's DNS proxy is unavailable
+- `drivers/wifi/udhcpc.sh` — busybox udhcpc lease script for ROMs without
+  dhcpcd
 - `tools/rk-ebc-probe.c`, `tools/build-rk-ebc-probe.sh` — Rockchip EBC
   buffer/refresh probe and calibration tool
 - `RK_EBC.md` — Rockchip EBC direct-buffer porting guide
