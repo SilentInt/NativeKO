@@ -280,3 +280,20 @@ ADB=/mnt/c/tools/android-sdk/platform-tools/adb.exe \
 - [x] SELinux 回包 allow
 - [x] DNS shim（getaddrinfo）
 - [x] APK 构建（profile.id=alita，线条 NKO 图标）并安装
+
+## 11. 与 NoteSL/T65A 的兼容性
+
+- `base/ffi/framebuffer_rk_ebc.lua` 的改动是 **纯新增、无删除**：
+  - `ebc_vendor_post=false`（notesl 未设置）时仍走原来的 32bpp +
+    `SEND_BUFFER(0x7001)` + `SEND_UPDATE(0x700c)` 路径；
+  - vendor gamma/GET_BUFFER/模式映射只在 alita profile 打开；
+  - `refreshScreensaver` 只在 `ebc_screensaver_mode=true` 时由 Device 调用，
+    notesl 不设置。
+- `notesl` profile 未改；`t65a` profile 保持 `power.model="none"`，
+  screensaver-only。T65A 的 early-suspend 驱动仍保留在仓库里，但未启用，
+  等实机复测后再打开。
+- 电源状态机（`Device:suspend/onPowerEvent`）是**所有 native 设备共用**的
+  重写：driver 返回后由 Device 主动恢复 UI。NoteSL 的 suspend 行为需要
+  在 NoteSL 实机上做一次回归测试（显示后端不受影响）。
+- DNS shim 只在 profile 配置了 `network.dns` 时预加载；`udhcpc` 只在
+  `dhcp_kind="udhcpc"` 时启用；双色温只在 `frontlight_warm` 存在时启用。
