@@ -542,6 +542,10 @@ function Device:_resumeUI(from_suspend)
     if self._wifi_was_on_before_screensaver then
         local NetworkMgr = require("ui/network/manager")
         NetworkMgr:restoreWifiAsync()
+        -- restoreWifiAsync only starts the shell side; also poll so
+        -- NetworkConnected/NetworkDisconnected fire and wifi_was_on/lease_ssid
+        -- are synced, exactly like NetworkMgr:init does for a restore.
+        NetworkMgr:scheduleConnectivityCheck()
         self._wifi_was_on_before_screensaver = false
     end
 end
