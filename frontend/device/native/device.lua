@@ -9,6 +9,7 @@ local Generic = require("device/generic/device")
 local logger = require("logger")
 local ffi = require("ffi")
 local ffiUtil = require("ffi/util")
+local time = require("ui/time")
 local _ = require("gettext")
 local C = ffi.C
 require("ffi/linux_input_h")
@@ -209,10 +210,38 @@ function Device:init()
     if quirks.power_down_only then
         -- gpio-keys reports KEY_POWER down and up; Device:onPowerEvent()
         -- treats every event as a toggle, so only forward the key-down.
+        -- The key that woke the SoC is also delivered to userspace after
+        -- resume; its evdev timestamp predates the driver return.  Drop only
+        -- that queued wake key instead of using a timed key-lockout window.
         self.input.event_map_adapter["Power"] = function(ev)
-            if ev.value == 1 then
-                return "Power"
+            if ev.value ~= 1 then
+                return nil
             end
+            -- The kernel delivers the wake key to userspace after resume.
+            -- Drop exactly one such key; this is not a key-lockout window:
+            -- the flag is cleared by the first Power event or by a short
+            -- safety timer, so later presses are handled normally.
+            if self._drop_wake_key
+                and (self._power_state == "awake"
+                     or self._power_state == "resuming")
+            then
+                self._drop_wake_key = false
+                logger.info("device/native: dropping queued wake key")
+                return nil
+            end
+            if self._resume_time and ev.time
+                and (self._power_state == "awake"
+                     or self._power_state == "resuming")
+            then
+                local ev_time = time.timeval(ev.time)
+                if ev_time <= self._resume_time + time.s(0.1) then
+                    logger.info(string.format(
+                        "device/native: ignoring queued wake key at %.3f",
+                        time.to_s(ev_time)))
+                    return nil
+                end
+            end
+            return "Power"
         end
     end
 
@@ -493,8 +522,19 @@ function Device:suspend()
     end
     -- The kernel slept and the driver returned after wakeup.  Always drive
     -- the resume UI from here; never depend on the wake key being delivered.
+    -- Remember when the driver returned so the wake key (whose evdev
+    -- timestamp predates this point) can be filtered instead of toggling the
+    -- screensaver again.
+    self._resume_time = time.now()
+    self._drop_wake_key = true
     self:_setPowerState("resuming")
     local UIManager = require("ui/uimanager")
+    UIManager:scheduleIn(2, function()
+        if self._drop_wake_key then
+            self._drop_wake_key = false
+            logger.dbg("device/native: wake-key drop expired")
+        end
+    end)
     UIManager:scheduleIn(0, self._resumeUI, self, true)
     return true
 end

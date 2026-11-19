@@ -173,6 +173,8 @@ awake --Power--> screensaver --2s--> suspending --driver返回--> resuming --> a
 ```
 
 - driver 返回后 **Device 主动执行 resume UI**，不依赖唤醒键；
+- 唤醒键可能在内核 resume 后再次投递到用户态；resume 后只丢弃**一个**
+  Power 事件（一次性，2s 安全解除），避免它把刚关闭的屏保重新打开；
 - suspend 失败/中止（包括 `write("/sys/power/state")` 返回错误，但内核其实
   短暂进过 mem）→ 回到 `screensaver`，下一次按键只关屏保；
 - 不做 USB/充电门禁：插线时也允许 suspend（未做专项充电测试）；

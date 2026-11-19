@@ -186,6 +186,14 @@ function M.resume(device, pw, disp, net)
         write_sysfs("/sys/power/wake_lock", lock)
     end
     clear_alarm(pw)
+    -- The wake key and touch state can survive the transition; reset the
+    -- parser before the resume UI runs.  The queued wake key itself is
+    -- filtered by Device's event timestamp check.
+    if device and device.input and device.input.resetState then
+        pcall(function()
+            device.input:resetState()
+        end)
+    end
     -- The EBC controller loses its draw/buffer state across mem.  Re-enable
     -- it before the first post-resume frame; otherwise SEND_BUFFER can time
     -- out and the next GET_BUFFER blocks forever in ebc_empty_buf_get.
