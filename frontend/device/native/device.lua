@@ -551,6 +551,11 @@ end
 -- resume hook; closing a plain screensaver does not need it.
 function Device:_resumeUI(from_suspend)
     if self._power_state ~= "resuming" then return end
+    -- Debounce the tail of a resume.  Closing the screensaver (including the
+    -- canceled-before-suspend path) can leave a Power event queued; without
+    -- this it can be treated as a fresh sleep request and re-enter the
+    -- screensaver.  This is a short transition debounce, not a key lockout.
+    self._power_debounce_until = time.now() + time.s(1.0)
     local UIManager = require("ui/uimanager")
     local Screensaver = require("ui/screensaver")
     UIManager:unschedule(self.suspend)
@@ -610,6 +615,14 @@ function Device:onPowerEvent(ev)
         tostring(self.screen_saver_mode)))
 
     if ev ~= "Power" and ev ~= "Suspend" and ev ~= "Resume" then
+        return
+    end
+
+    -- Ignore the tail of the resume transition (queued wake key or a second
+    -- press while the screensaver is closing).  This is deliberately short
+    -- and only covers the transition; it is not a general key lockout.
+    if self._power_debounce_until and time.now() < self._power_debounce_until then
+        logger.info("device/native: power event ignored during resume debounce")
         return
     end
 
