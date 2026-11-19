@@ -284,8 +284,9 @@ ADB=/mnt/c/tools/android-sdk/platform-tools/adb.exe \
 
 - profile id：`alita`；
 - APK 内置默认 profile `alita`（构建时写入 `native/profile.id`）；
-- 启动器图标为线条风 **NKO**，资源在
-  `platform/android/nativeko/res/mipmap-*`；
+- 启动器图标为线稿 **native / O / N**：左侧竖杆、O 双环、中心实心 N；
+  PNG 在 `platform/android/nativeko/res/mipmap-*`，SVG 源文件为
+  `platform/android/nativeko/res/icon-nativeko.svg`；
 - 首次启动解压 assets；用户数据仍在 `/sdcard/koreader`。
 
 ## 9. 已知问题/后续
@@ -310,7 +311,7 @@ ADB=/mnt/c/tools/android-sdk/platform-tools/adb.exe \
 - [x] SELinux 回包 allow
 - [x] DNS shim（getaddrinfo）
 - [x] EBC GET_BUFFER 超时保护 + resume 重新初始化
-- [x] APK 构建（profile.id=alita，线条 NKO 图标）并安装
+- [x] APK 构建（profile.id=alita，native/O/N 线稿图标）并安装
 
 ## 11. 与 NoteSL/T65A 的兼容性
 
