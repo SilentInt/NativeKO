@@ -485,11 +485,11 @@ function Device:suspend()
     logger.info(string.format(
         "device/native: suspend driver returned ok=%s reason=%s",
         tostring(ok), tostring(reason)))
-    if reason == "usb" or not ok then
-        -- Charging or a failed/aborted request: stay in the screensaver.
+    if not ok then
+        -- The request failed or was aborted: stay in the screensaver.
         -- The next power key closes it; no resume-busy state is entered.
         self:_setPowerState("screensaver")
-        return ok
+        return false
     end
     -- The kernel slept and the driver returned after wakeup.  Always drive
     -- the resume UI from here; never depend on the wake key being delivered.
@@ -583,15 +583,22 @@ function Device:onPowerEvent(ev)
     end
 
     if self._power_state == "screensaver" then
-        -- Cancel a suspend that has not started yet, then close the
-        -- screensaver.  No PM driver call is needed here.
+        -- Only a wake request (Power or Resume) closes the screensaver; a
+        -- Suspend event must not turn it back on.
+        if ev == "Suspend" then
+            return
+        end
         UIManager:unschedule(self.suspend)
         self:_setPowerState("resuming")
         UIManager:scheduleIn(0, self._resumeUI, self, false)
         return
     end
 
-    -- awake: show the screensaver, then suspend after the panel has painted.
+    -- awake: only a sleep request (Power or Suspend) enters the screensaver;
+    -- a Resume event must not put an awake device to sleep.
+    if ev == "Resume" then
+        return
+    end
     local ok, ScreenSaverWidget = pcall(require, "ui/widget/screensaverwidget")
     if ok and ScreenSaverWidget then
         ScreenSaverWidget.onTap = function() end

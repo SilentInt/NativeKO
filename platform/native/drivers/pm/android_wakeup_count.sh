@@ -52,8 +52,10 @@ pm_stop() {
         i=$((i + 1))
     done
 
-    # Release our lock and any session lock leaked by an earlier core that
-    # was killed without running its trap (e.g. USB disappeared on suspend).
+    # Release session locks leaked by an earlier core that was killed without
+    # running its trap, then release our own lock unconditionally.  The loop
+    # deliberately skips $LOCK, so it must be released explicitly afterwards;
+    # otherwise Android is left unable to suspend after the session exits.
     base="${PWR_WAKE_LOCK_NAME:-nativeko}"
     for name in $(cat /sys/power/wake_lock 2>/dev/null); do
         case "$name" in
@@ -62,7 +64,8 @@ pm_stop() {
                 echo "$name" > /sys/power/wake_unlock 2>/dev/null ;;
         esac
     done
-    [ -n "${PWR_RTC_ALARM:-}" ] && [ -w "$PWR_RTC_ALARM" ] && \
-        echo 0 > "$PWR_RTC_ALARM" 2>/dev/null
+    [ -n "$LOCK" ] && echo "$LOCK" > /sys/power/wake_unlock 2>/dev/null
+    # Do not touch the RTC here: the framework has already been restored and
+    # may have armed its own AlarmManager wakeup.
     echo "$(date) pm_stop" >> "$NATIVE_DIR/suspend.log" 2>/dev/null
 }

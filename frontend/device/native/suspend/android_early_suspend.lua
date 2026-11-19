@@ -15,14 +15,13 @@
 --
 -- Notes for this model:
 --   * never write the RTC; it is shared with Android.  We only log it.
---   * USB online is a hard gate: charging must not enter mem.
+--   * there is no USB/charging gate; suspend is allowed while plugged in.
 --   * the wake key can be consumed by the kernel suspend path, so the UI
 --     resume is driven by Device:suspend() after this driver returns.
 --
 -- Profile fields (power.*):
 --   suspend_state       "mem" (default)
 --   suspend_wait_timeout screensaver delay before the request (in device.lua)
---   usb_online          /sys/class/power_supply/usb/online
 --   wake_lock_name      base name for the per-session lock
 --   wake_unlock         extra framework lock names to release
 
@@ -142,18 +141,6 @@ local function release_other_locks(pw, keep)
     end
 end
 
--- USB (and therefore charging) is a hard gate: entering mem with the charger
--- attached can disturb the charging IC/USB PHY clocks and breaks adb.
-local function usb_online(pw)
-    local path = pw.usb_online
-    if path == nil then
-        path = "/sys/class/power_supply/usb/online"
-    end
-    if path == "" then return false end
-    local v = read_sys(path)
-    return v ~= nil and v:gsub("%s+$", "") == "1"
-end
-
 local function log_dmesg()
     local out = tail_lines(run("dmesg 2>/dev/null"), 160)
     if not out or out == "" then return end
@@ -167,11 +154,6 @@ end
 function M.suspend(device, pw, disp, net)
     local lock = session_lock(pw)
     log("suspend begin lock=" .. tostring(lock))
-
-    if usb_online(pw) then
-        log("USB online, refusing suspend")
-        return false, "usb"
-    end
 
     log_locks("before cleanup")
     release_other_locks(pw, lock)

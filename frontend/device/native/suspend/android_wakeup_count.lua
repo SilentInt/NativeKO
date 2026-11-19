@@ -73,14 +73,24 @@ local function release_other_locks(pw, keep)
     for _, name in ipairs(pw.wake_unlock or {}) do
         names[name] = true
     end
+    local base = pw.wake_lock_name
     for name in pairs(active_locks()) do
         if name ~= keep then
-            names[name] = true
+            if name:match("^PowerManagerService%.") or name == "KeyEvents" then
+                names[name] = true
+            elseif base and base ~= ""
+                and (name == base or name:sub(1, #base + 1) == base .. "-")
+            then
+                -- A session lock leaked by an older core; not ours.
+                names[name] = true
+            end
         end
     end
     for name in pairs(names) do
         if name ~= keep then
-            write_sysfs("/sys/power/wake_unlock", name)
+            if write_sysfs("/sys/power/wake_unlock", name) then
+                log("released lock " .. name)
+            end
         end
     end
 end
@@ -131,12 +141,14 @@ function M.suspend(device, pw, disp, net)
     local lock = session_lock(pw)
     log("suspend begin lock=" .. tostring(lock))
 
-    -- Wi-Fi must be down before suspending: bcmdhd's OOB IRQ can otherwise
-    -- wake the system and abort the transition.  onPowerEvent() has already
-    -- disabled it; this is idempotent and also covers direct calls.
-    os.execute(string.format(
-        "sh %s/session.sh --profile %s wifi-suspend >/dev/null 2>&1",
-        native_dir, profile_id))
+    -- Wi-Fi is normally brought down before sleeping (bcmdhd's OOB IRQ can
+    -- otherwise abort the transition).  Profiles that know the radio cannot
+    -- wake the SoC can opt out with wifi_keep_on_suspend.
+    if pw.wifi_keep_on_suspend ~= true then
+        os.execute(string.format(
+            "sh %s/session.sh --profile %s wifi-suspend >/dev/null 2>&1",
+            native_dir, profile_id))
+    end
 
     clear_alarm(pw)
     release_other_locks(pw, lock)
@@ -160,7 +172,11 @@ function M.suspend(device, pw, disp, net)
         write_sysfs("/sys/power/wake_lock", lock)
     end
     clear_alarm(pw)
-    log("resumed state=" .. tostring(state))
+    if state then
+        log("resumed state=" .. tostring(state))
+    else
+        log("suspend failed/aborted")
+    end
     return state ~= nil
 end
 

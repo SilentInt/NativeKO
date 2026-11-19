@@ -65,7 +65,8 @@ NativeKO 当前映射（`platform/native/profiles/alita/profile.json`）：
 | KOReader 类型 | epd_mode |
 |---|---:|
 | full | 1 |
-| partial / ui | 15 |
+| partial | 15 |
+| ui | 3（EPD_PART，菜单/对话框实验） |
 | flashpartial / flashui | 11 |
 | fast | 18 |
 | a2 | 2 |
@@ -148,7 +149,7 @@ awake --Power--> screensaver --2s--> suspending --driver返回--> resuming --> a
 - driver 返回后 **Device 主动执行 resume UI**，不依赖唤醒键；
 - suspend 失败/中止（包括 `write("/sys/power/state")` 返回错误，但内核其实
   短暂进过 mem）→ 回到 `screensaver`，下一次按键只关屏保；
-- USB 门禁 → 回到 `screensaver`；
+- 不做 USB/充电门禁：插线时也允许 suspend（未做专项充电测试）；
 - 没有定时锁键窗口；busy 只覆盖真正的驱动调用和 resume 重绘。
 
 ### 4.4 写 state 的“失败”
