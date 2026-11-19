@@ -15,14 +15,6 @@ FB_ACK_PIDS=""
 pm_start() {
     LOCK="${KO_NATIVE_WAKE_LOCK:-${PWR_WAKE_LOCK_NAME:-nativeko}}"
 
-    # Verbose PM traces for suspend debugging. The suspend driver snapshots
-    # dmesg into suspend-trace.log before dropping the last wake lock,
-    # because this kernel has no /proc/last_kmsg or pstore.
-    echo 31 > /sys/module/wakelock/parameters/debug_mask 2>/dev/null
-    echo 15 > /sys/module/earlysuspend/parameters/debug_mask 2>/dev/null
-    echo 15 > /sys/module/alarm/parameters/debug_mask 2>/dev/null
-    echo 15 > /sys/module/alarm_dev/parameters/debug_mask 2>/dev/null
-
     # Acquire the session lock before touching anything else, so setup cannot
     # accidentally autosuspend.
     if [ -n "$LOCK" ]; then

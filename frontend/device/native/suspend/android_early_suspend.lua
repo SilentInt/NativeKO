@@ -160,10 +160,7 @@ function M.suspend(device, pw, disp, net)
     os.execute("sync")
     log_locks("after cleanup")
 
-    -- Read-only: the RTC alarm belongs to Android and may hold wake events we
-    -- do not own.
-    log("rtc wakealarm (untouched): "
-        .. tostring(read_sys("/sys/class/rtc/rtc0/wakealarm")))
+    -- The RTC alarm belongs to Android; never arm or clear it here.
 
     local mono1 = clock(CLOCK_MONOTONIC)
     local boot1 = clock(CLOCK_BOOTTIME)
