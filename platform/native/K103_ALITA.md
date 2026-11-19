@@ -220,6 +220,9 @@ Alita 有两个独立背光节点：
 - profile `network.start_on_boot=true`：进入 NativeKO 时自动 `wifi_up`
   （启动 supplicant、接口和 DHCP），默认打开 Wi-Fi；启动在后台执行，
   不阻塞 KOReader 启动；
+- `start_on_boot` 只打开射频，不代替扫描/选择网络；首次需要在 KOReader
+  里手动连接，成功后 native 侧会补执行 `SAVE_CONFIG`，网络写入
+  `/data/misc/wifi/wpa_supplicant.conf`，之后启动和 resume 才能自动重连；
 - suspend 前 `NetworkMgr:disableWifi()` + `wifi-suspend`；resume 后
   `restoreWifiAsync()` 重新 `wifi-up`，并调用 `scheduleConnectivityCheck()`
   同步 `NetworkConnected`/`wifi_was_on`/`lease_ssid`，不会只起 supplicant

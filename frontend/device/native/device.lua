@@ -334,6 +334,32 @@ function Device:initNetworkManager(NetworkMgr)
         ctrl_interface = ctrl_interface,
     })
 
+    -- The generic WPA backend adds/enables a network at runtime but never
+    -- persists it.  Without SAVE_CONFIG, wpa_supplicant.conf stays empty and
+    -- every new session needs a manual scan/select.  Persist a successful
+    -- native authentication so the next wifi_up can auto-connect.
+    local orig_authenticate = NetworkMgr.authenticateNetwork
+    if orig_authenticate then
+        function NetworkMgr:authenticateNetwork(network)
+            local ok, msg = orig_authenticate(self, network)
+            if ok then
+                local saved, WpaClient = pcall(require, "lj-wpaclient/wpaclient")
+                if saved and WpaClient then
+                    local wcli = WpaClient.new(ctrl_interface)
+                    if wcli then
+                        local reply, err = wcli:sendCtrlCmd("SAVE_CONFIG")
+                        if reply == nil then
+                            logger.warn("device/native: SAVE_CONFIG failed:",
+                                tostring(err))
+                        end
+                        wcli:close()
+                    end
+                end
+            end
+            return ok, msg
+        end
+    end
+
     function NetworkMgr:isWifiOn()
         local prop = net.service_prop
         if prop and prop ~= "" then
