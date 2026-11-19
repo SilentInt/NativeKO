@@ -223,6 +223,9 @@ Alita 有两个独立背光节点：
 - `start_on_boot` 只打开射频，不代替扫描/选择网络；首次需要在 KOReader
   里手动连接，成功后 native 侧会补执行 `SAVE_CONFIG`，网络写入
   `/data/misc/wifi/wpa_supplicant.conf`，之后启动和 resume 才能自动重连；
+- `wifi_up` 是幂等的：supplicant 已在运行时不再 stop/start，避免 resume
+  时把刚建立的关联打断；只有会话启动时用 `WIFI_FORCE_RESTART=1` 强制
+  重启一次；
 - suspend 前 `NetworkMgr:disableWifi()` + `wifi-suspend`；resume 后
   `restoreWifiAsync()` 重新 `wifi-up`，并调用 `scheduleConnectivityCheck()`
   同步 `NetworkConnected`/`wifi_was_on`/`lease_ssid`，不会只起 supplicant

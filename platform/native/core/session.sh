@@ -295,7 +295,7 @@ set_native_governor
 if [ "$NET_MANAGE" = "1" ] && [ "$NET_START_ON_BOOT" = "1" ]; then
     # Start the radio without blocking KOReader startup on a missing carrier
     # or DHCP lease; full_restore kills it if the session exits mid-startup.
-    ( wifi_up ) >/dev/null 2>&1 &
+    ( WIFI_FORCE_RESTART=1; wifi_up ) >/dev/null 2>&1 &
     WIFI_BOOT_PID=$!
 fi
 

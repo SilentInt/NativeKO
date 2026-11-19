@@ -264,12 +264,16 @@ wifi_up() {
     ip link set "$NET_IFACE" up 2>/dev/null
 
     if [ -n "${NET_SERVICE:-}" ]; then
-        # Always restart: a supplicant inherited from a framework session can
-        # keep stale in-memory networks and loop on 4-way handshake failures.
-        setprop ctl.stop "$NET_SERVICE" 2>/dev/null
-        _net_wait_service stopped
-        setprop ctl.start "$NET_SERVICE" 2>/dev/null
-        _net_wait_service running
+        # A resume/restore can race the startup wifi_up.  Restarting an
+        # already running supplicant drops a just-established association;
+        # only force a restart at session start (WIFI_FORCE_RESTART=1).
+        svc_state=$(getprop "init.svc.$NET_SERVICE" 2>/dev/null)
+        if [ "${WIFI_FORCE_RESTART:-0}" = "1" ] || [ "$svc_state" != "running" ]; then
+            setprop ctl.stop "$NET_SERVICE" 2>/dev/null
+            _net_wait_service stopped
+            setprop ctl.start "$NET_SERVICE" 2>/dev/null
+            _net_wait_service running
+        fi
     fi
 
     _i=0
