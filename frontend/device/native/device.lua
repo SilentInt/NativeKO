@@ -516,7 +516,7 @@ function Device:_resumeUI(from_suspend)
     -- canceled-before-suspend path) can leave a Power event queued; without
     -- this it can be treated as a fresh sleep request and re-enter the
     -- screensaver.  This is a short transition debounce, not a key lockout.
-    self._power_debounce_until = time.now() + time.s(1.0)
+    self._power_debounce_until = time.now() + time.s(1.5)
     local UIManager = require("ui/uimanager")
     local Screensaver = require("ui/screensaver")
     UIManager:unschedule(self.suspend)

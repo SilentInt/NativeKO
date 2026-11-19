@@ -174,7 +174,7 @@ awake --Power--> screensaver --2s--> suspending --driver返回--> resuming --> a
 
 - driver 返回后 **Device 主动执行 resume UI**，不依赖唤醒键；
 - 唤醒键可能在内核 resume 后再次投递到用户态；resume/关闭屏保后有一个
-  **1 秒防抖**，期间忽略 Power 事件，避免尾随按键重新打开屏保或立刻再次
+  **1.5 秒防抖**，期间忽略 Power 事件，避免尾随按键重新打开屏保或立刻再次
   休眠；防抖只覆盖切换过程，不是长期按键锁定；
 - suspend 失败/中止（包括 `write("/sys/power/state")` 返回错误，但内核其实
   短暂进过 mem）→ 回到 `screensaver`，下一次按键只关屏保；
@@ -217,6 +217,8 @@ Alita 有两个独立背光节点：
   - 每接口 socket：`/data/misc/wifi/sockets/wlan0`（本 profile 使用）。
 - ROM **没有 dhcpcd/udhcpc/dhcpclient**；DHCP 用 Magisk busybox：
   `/data/adb/magisk/busybox udhcpc`，`udhcpc.sh` 安装 IP/路由/`net.dns1`。
+- profile `network.start_on_boot=true`：进入 NativeKO 时自动 `wifi_up`
+  （启动 supplicant、接口和 DHCP），默认打开 Wi-Fi；
 - 实测：SSID、`wpa_state=COMPLETED`、IP `192.168.1.114/24`、默认路由、
   gateway/外网 ping 均正常。
 
