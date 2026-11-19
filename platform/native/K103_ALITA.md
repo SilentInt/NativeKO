@@ -226,6 +226,9 @@ Alita 有两个独立背光节点：
 - `wifi_up` 是幂等的：supplicant 已在运行时不再 stop/start，避免 resume
   时把刚建立的关联打断；只有会话启动时用 `WIFI_FORCE_RESTART=1` 强制
   重启一次；
+- 启动和 resume 后 4 秒会自动执行一次非交互
+  `reconnectOrShowNetworkMenu(nil, false)`，用 KOReader 保存的
+  `network.lua` 扫描/认证并重连；不会弹出 AP 列表；
 - suspend 前 `NetworkMgr:disableWifi()` + `wifi-suspend`；resume 后
   `restoreWifiAsync()` 重新 `wifi-up`，并调用 `scheduleConnectivityCheck()`
   同步 `NetworkConnected`/`wifi_was_on`/`lease_ssid`，不会只起 supplicant

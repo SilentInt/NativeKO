@@ -316,6 +316,29 @@ function Device:initNetworkManager(NetworkMgr)
     end
     local session = native_dir .. "/session.sh"
 
+    local auto_connect_cb
+    local function cancel_auto_connect()
+        if auto_connect_cb then
+            require("ui/uimanager"):unschedule(auto_connect_cb)
+            auto_connect_cb = nil
+        end
+    end
+    local function schedule_auto_connect()
+        if auto_connect_cb then return end
+        auto_connect_cb = function()
+            auto_connect_cb = nil
+            if not NetworkMgr:isWifiOn() then return end
+            -- Non-interactive: uses KOReader's saved networks and never
+            -- opens the AP list.  This is what a manual Wi-Fi tap does after
+            -- wifi_up; autostart/resume need the same scan/associate step.
+            local ok = NetworkMgr:reconnectOrShowNetworkMenu(nil, false)
+            if ok then
+                NetworkMgr:scheduleConnectivityCheck()
+            end
+        end
+        require("ui/uimanager"):scheduleIn(4, auto_connect_cb)
+    end
+
     local function session_bg(sub)
         return string.format(
             "%s sh %s --profile %s %s >/dev/null 2>&1 &",
@@ -384,6 +407,7 @@ function Device:initNetworkManager(NetworkMgr)
     end
 
     function NetworkMgr:turnOnWifi(complete_callback, interactive)
+        cancel_auto_connect()
         os.execute(session_bg("wifi-up"))
         local UIManager = require("ui/uimanager")
         local InfoMessage = require("ui/widget/infomessage")
@@ -420,12 +444,14 @@ function Device:initNetworkManager(NetworkMgr)
     end
 
     function NetworkMgr:turnOffWifi(complete_callback)
+        cancel_auto_connect()
         os.execute(session_fg("wifi-down"))
         if complete_callback then complete_callback() end
     end
 
     function NetworkMgr:restoreWifiAsync()
         os.execute(session_bg("wifi-up"))
+        schedule_auto_connect()
     end
 
     function NetworkMgr:obtainIP()
@@ -436,6 +462,12 @@ function Device:initNetworkManager(NetworkMgr)
         -- Only drop the DHCP lease; the association stays up so obtainIP()
         -- can renew it (NetworkMgr does this on a stale-lease switch).
         os.execute(session_fg("wifi-release"))
+    end
+
+    if net.start_on_boot then
+        -- The session starts the radio in the background; make sure KOReader
+        -- also performs the scan/associate step for its saved network.
+        NetworkMgr:restoreWifiAsync()
     end
 end
 
