@@ -77,6 +77,7 @@ KO_NATIVE_WAKE_LOCK="${PWR_WAKE_LOCK_NAME:-nativeko}-$$"
 export KO_NATIVE_WAKE_LOCK
 
 BIN="${KO_NATIVE_BIN:-${KO_T65A_BIN:-$NATIVE_DIR/koreader-native}}"
+WIFI_BOOT_PID=""
 JOURNAL="$NATIVE_DIR/session.journal"
 GOV_SAVE="$NATIVE_DIR/original_governors"
 
@@ -224,6 +225,11 @@ unblank_display() {
 
 full_restore() {
     restore_governor
+    if [ -n "${WIFI_BOOT_PID:-}" ]; then
+        kill "$WIFI_BOOT_PID" 2>/dev/null
+        wait "$WIFI_BOOT_PID" 2>/dev/null
+        WIFI_BOOT_PID=""
+    fi
     [ -n "$WIFI_DRIVER" ] && wifi_down
     unblank_display
     HOST_STOPPED=1
@@ -287,7 +293,10 @@ host_pre_start
 prepare_display
 set_native_governor
 if [ "$NET_MANAGE" = "1" ] && [ "$NET_START_ON_BOOT" = "1" ]; then
-    wifi_up
+    # Start the radio without blocking KOReader startup on a missing carrier
+    # or DHCP lease; full_restore kills it if the session exits mid-startup.
+    ( wifi_up ) >/dev/null 2>&1 &
+    WIFI_BOOT_PID=$!
 fi
 
 cd "$KO_HOME" || exit 1

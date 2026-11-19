@@ -218,7 +218,8 @@ Alita 有两个独立背光节点：
 - ROM **没有 dhcpcd/udhcpc/dhcpclient**；DHCP 用 Magisk busybox：
   `/data/adb/magisk/busybox udhcpc`，`udhcpc.sh` 安装 IP/路由/`net.dns1`。
 - profile `network.start_on_boot=true`：进入 NativeKO 时自动 `wifi_up`
-  （启动 supplicant、接口和 DHCP），默认打开 Wi-Fi；
+  （启动 supplicant、接口和 DHCP），默认打开 Wi-Fi；启动在后台执行，
+  不阻塞 KOReader 启动；
 - suspend 前 `NetworkMgr:disableWifi()` + `wifi-suspend`；resume 后
   `restoreWifiAsync()` 重新 `wifi-up`，并调用 `scheduleConnectivityCheck()`
   同步 `NetworkConnected`/`wifi_was_on`/`lease_ssid`，不会只起 supplicant
