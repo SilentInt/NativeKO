@@ -47,6 +47,11 @@ done
 echo "== building native launcher =="
 ( cd "$ROOT/platform/native-harness" && ANDROID_NDK_HOME="$NDK" ./build-native.sh )
 
+echo "== building EBC timeout helper =="
+if [ ! -f "$ROOT/platform/native-harness/libnativeko-ebc.so" ]; then
+    ANDROID_NDK_HOME="$NDK" bash "$ROOT/platform/native/tools/build-ebc-helper.sh"
+fi
+
 echo "== staging KOReader module from device =="
 rm -rf "$BUILD"
 mkdir -p "$STAGE" "$BUILD/classes" "$BUILD/dex"
@@ -54,16 +59,28 @@ mkdir -p "$STAGE" "$BUILD/classes" "$BUILD/dex"
 $ADB shell "su -c '
   rm -rf /data/local/tmp/nativeko-stage /data/local/tmp/nativeko-stage.tar
   mkdir -p /data/local/tmp/nativeko-stage/ko /data/local/tmp/nativeko-stage/libs
-  cp -a /data/data/org.koreader.launcher/files/. /data/local/tmp/nativeko-stage/ko/ 2>/dev/null
-  rm -f /data/local/tmp/nativeko-stage/ko/libs
-  LIBDIR=/data/app-lib/org.koreader.launcher-1
-  [ -d \"\$LIBDIR\" ] || LIBDIR=/data/data/org.koreader.launcher/lib
-  for f in libkoreader-monolibtic.so libluajit.so libsdcv.so libioctl.so; do
-      [ -f \"\$LIBDIR/\$f\" ] && cp -a \"\$LIBDIR/\$f\" /data/local/tmp/nativeko-stage/libs/
-  done
+  SRC=/data/data/org.koreader.launcher/files
+  if [ -d \"\$SRC\" ]; then
+      cp -a \"\$SRC\"/. /data/local/tmp/nativeko-stage/ko/ 2>/dev/null
+      rm -f /data/local/tmp/nativeko-stage/ko/libs
+      LIBDIR=/data/app-lib/org.koreader.launcher-1
+      [ -d \"\$LIBDIR\" ] || LIBDIR=/data/data/org.koreader.launcher/lib
+      for f in libkoreader-monolibtic.so libluajit.so libsdcv.so libioctl.so; do
+          [ -f \"\$LIBDIR/\$f\" ] && cp -a \"\$LIBDIR/\$f\" /data/local/tmp/nativeko-stage/libs/
+      done
+  elif [ -d /data/data/com.nativeko/files/ko ]; then
+      # Standalone NativeKO already carries the complete ko tree and libs.
+      cp -a /data/data/com.nativeko/files/ko/. /data/local/tmp/nativeko-stage/ko/
+  else
+      echo \"no KOReader module found\" >&2
+      exit 1
+  fi
   cd /data/local/tmp/nativeko-stage && \
-  if command -v tar >/dev/null 2>&1; then tar cf /data/local/tmp/nativeko-stage.tar ko libs; \
-  else /system/bin/busybox tar cf /data/local/tmp/nativeko-stage.tar ko libs; fi
+  if [ -d libs ] && [ -n \"\$(ls -A libs 2>/dev/null)\" ]; then \
+      tar cf /data/local/tmp/nativeko-stage.tar ko libs; \
+  else \
+      tar cf /data/local/tmp/nativeko-stage.tar ko; \
+  fi
   chmod 644 /data/local/tmp/nativeko-stage.tar
 '"
 $ADB pull /data/local/tmp/nativeko-stage.tar "$BUILD/stage.tar" >/dev/null
@@ -76,10 +93,12 @@ rm -f "$STAGE/ko/settings.reader.lua" "$STAGE/ko/settings.reader.lua.old" \
       "$STAGE/ko/history.lua" "$STAGE/ko/defaults.custom.lua" \
       "$STAGE/ko/defaults.custom.lua.old" "$STAGE/ko/update_once.marker"
 # NOTE: keep git-rev: reader.lua exits on startup if Version:getCurrentRevision() returns nil.
-rm -rf "$STAGE/ko/libs"
-mkdir -p "$STAGE/ko/libs"
-mv "$STAGE/libs"/* "$STAGE/ko/libs/"
-rmdir "$STAGE/libs"
+if [ -d "$STAGE/libs" ] && [ -n "$(ls -A "$STAGE/libs" 2>/dev/null)" ]; then
+    rm -rf "$STAGE/ko/libs"
+    mkdir -p "$STAGE/ko/libs"
+    mv "$STAGE/libs"/* "$STAGE/ko/libs/"
+    rmdir "$STAGE/libs"
+fi
 
 # The Android monolibtic does not contain the Linux evdev input module; the
 # native backend loads it as libs/libkoreader-input.so.  It must be built once
@@ -119,6 +138,9 @@ cp -f "$ROOT/platform/native-harness/koreader-native" "$STAGE/native/"
 cp -f "$ROOT/platform/native-harness/detach" "$STAGE/native/"
 if [ -f "$ROOT/platform/native-harness/libnativeko-dns.so" ]; then
     cp -f "$ROOT/platform/native-harness/libnativeko-dns.so" "$STAGE/native/"
+fi
+if [ -f "$ROOT/platform/native-harness/libnativeko-ebc.so" ]; then
+    cp -f "$ROOT/platform/native-harness/libnativeko-ebc.so" "$STAGE/native/"
 fi
 for s in run-native.sh restore-android.sh; do
     cp -f "$ROOT/platform/native-harness/$s" "$STAGE/native/"

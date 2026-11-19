@@ -84,6 +84,32 @@ HWC 的 `init_gamma_table(sys.by.gammalevel)` 生成 256 项表，当前
 驱动在 `_vendorInit` 里按同一公式建表；线性 `v>>3` 和原厂曲线不一致，会
 影响文字/菜单的对比度和残影观感。
 
+### 2.3 EBC buffer 生命周期与 frame timeout
+
+`_vendorPost` 的流程是：
+
+```
+GET_BUFFER(0x7000) -> 写 8bpp 帧 -> SEND_BUFFER(0x7001)
+```
+
+`SEND_BUFFER` 只是把 buffer 放进内核队列并立即返回；内核 EBC 线程完成这一帧
+后才把 buffer 放回空闲池。`DRAW_ENABLE/STOP` 是会话级的，**不是每帧开关**；
+`DRAW_STOP` 只在 framebuffer close 时调用。
+
+内核日志出现 `frame timeout.` 时，buffer 可能没有回到空闲池；下一次
+`GET_BUFFER` 会永久阻塞在 `ebc_empty_buf_get`。KOReader 是单线程，主线程
+一卡，输入/电源键就全部无响应，表现和“睡死”一样。
+
+修复：
+
+- `libnativeko-ebc.so` 用 `SIGALRM` 给 `GET_BUFFER`/`GET_STATUS` 加超时；
+  超时后标记 EBC wedged，跳过后续刷新，主线程继续处理输入；
+- resume 时重新 `DRAW_ENABLE` 并轮询 `GET_STATUS`，避免第一次刷新就
+  timeout；
+- helper 缺失时退回直接 ioctl，但会记录警告（APK 会内置 helper）。
+
+如果 ioctl 本身不可中断，超时也无法返回；这种情况只能重启恢复。
+
 ## 3. 触摸
 
 - `cyttsp5_mt` 是 MT-B（有 slot/tracking id）；不需要 `mt_a_touch_up`。
@@ -280,6 +306,7 @@ ADB=/mnt/c/tools/android-sdk/platform-tools/adb.exe \
 - [x] Wi-Fi 扫描/连接/DHCP
 - [x] SELinux 回包 allow
 - [x] DNS shim（getaddrinfo）
+- [x] EBC GET_BUFFER 超时保护 + resume 重新初始化
 - [x] APK 构建（profile.id=alita，线条 NKO 图标）并安装
 
 ## 11. 与 NoteSL/T65A 的兼容性

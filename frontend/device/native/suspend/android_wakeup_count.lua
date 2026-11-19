@@ -186,6 +186,17 @@ function M.resume(device, pw, disp, net)
         write_sysfs("/sys/power/wake_lock", lock)
     end
     clear_alarm(pw)
+    -- The EBC controller loses its draw/buffer state across mem.  Re-enable
+    -- it before the first post-resume frame; otherwise SEND_BUFFER can time
+    -- out and the next GET_BUFFER blocks forever in ebc_empty_buf_get.
+    if device and device.screen and device.screen.onResume then
+        local ok, err = pcall(function()
+            device.screen:onResume()
+        end)
+        if not ok then
+            log("screen resume failed: " .. tostring(err))
+        end
+    end
     log("resume")
 end
 

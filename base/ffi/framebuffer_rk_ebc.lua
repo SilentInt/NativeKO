@@ -61,7 +61,24 @@ typedef struct {
     int32_t flags;
     int32_t unknown_24;
 } rk_ebc_send_update;
+
+/* Bounded-time wrappers from libnativeko-ebc.so (optional). */
+int nativeko_ebc_acquire(int fd, rk_ebc_buf_info *info, int timeout_ms);
+int nativeko_ebc_send(int fd, rk_ebc_buf_info *info);
+int nativeko_ebc_status(int fd, int *status, int timeout_ms);
+int nativeko_ebc_draw_enable(int fd);
+int nativeko_ebc_draw_stop(int fd);
 ]]
+
+local ETIMEDOUT = 110
+
+local function load_ebc_helper()
+    local dir = os.getenv("KO_NATIVE_DIR")
+    if not dir or dir == "" then return nil end
+    local ok, lib = pcall(ffi.load, dir .. "/libnativeko-ebc.so")
+    if ok then return lib end
+    return nil
+end
 
 local framebuffer = {
     device_node = "/dev/ebc",
@@ -119,6 +136,15 @@ local framebuffer = {
     ebc_gray_max = 30,
     ebc_gamma_level = nil,  -- sys.by.gammalevel; use the vendor 16-gray LUT
     ebc_screensaver_mode = false, -- vendor EPD_FULL_DITHER screensaver path
+
+    -- Bounded EBC waits.  GET_BUFFER blocks in ebc_empty_buf_get when the
+    -- kernel EBC thread has no free buffer (usually after a frame timeout).
+    -- With the helper loaded we time out instead of deadlocking the UI thread.
+    ebc_acquire_timeout_ms = 1000,
+    ebc_status_timeout_ms = 300,
+    ebc_helper = nil,
+    _ebc_wedged = false,
+    _ebc_wedge_logged = false,
 }
 
 function framebuffer:init()
@@ -232,7 +258,15 @@ end
 -- Keeping the vendor ebc_buf_info intact is important (rotate/geometry).
 function framebuffer:_vendorInit(w, h, stride)
     local map_len = self.ebc_map_len or (12 * 1024 * 1024)
-    local rc = C.ioctl(self.fd, self.ebc_cmd_draw_enable, nil)
+    self.ebc_helper = load_ebc_helper()
+    local rc
+    if self.ebc_helper then
+        rc = self.ebc_helper.nativeko_ebc_draw_enable(self.fd)
+    else
+        rc = C.ioctl(self.fd, self.ebc_cmd_draw_enable, nil)
+        self.debug("framebuffer_rk_ebc: libnativeko-ebc.so missing, "
+            .. "EBC ioctls are unbounded")
+    end
     if rc < 0 then
         self.debug("framebuffer_rk_ebc: DRAW_ENABLE failed")
     end
@@ -273,7 +307,8 @@ function framebuffer:_vendorInit(w, h, stride)
         self.screen_size = { w = self.bb:getWidth(), h = self.bb:getHeight() }
     end
     self.debug("framebuffer_rk_ebc: vendor POST buffer", w, h,
-               "stride", stride, "map", map_len)
+               "stride", stride, "map", map_len,
+               "helper", self.ebc_helper and "yes" or "no")
 end
 
 function framebuffer:_vendorConvert(dst)
@@ -285,8 +320,29 @@ function framebuffer:_vendorConvert(dst)
     end
 end
 
+function framebuffer:_vendorStatus(timeout_ms)
+    local lib = self.ebc_helper
+    if not lib then return nil, nil end
+    local st = ffi.new("int[2]")
+    local rc = lib.nativeko_ebc_status(self.fd, st,
+        timeout_ms or self.ebc_status_timeout_ms)
+    if rc < 0 then
+        return nil, ffi.errno()
+    end
+    return { st[0], st[1] }, nil
+end
+
+function framebuffer:_vendorWedge(reason)
+    self._ebc_wedged = true
+    if not self._ebc_wedge_logged then
+        self._ebc_wedge_logged = true
+        self.debug("framebuffer_rk_ebc: EBC wedged: " .. tostring(reason))
+    end
+end
+
 function framebuffer:_vendorPost(mode)
-    if not self.ebc_enabled then return end
+    if not self.ebc_enabled then return false end
+    if self._ebc_wedged then return false end
     if os.getenv("KO_NATIVE_EBC_LOG") then
         local info = debug.getinfo(2, "nSl")
         print(os.date("%H:%M:%S"), "EBC post mode=", mode,
@@ -294,16 +350,28 @@ function framebuffer:_vendorPost(mode)
               info and info.currentline or "")
     end
     local info = ffi.new("rk_ebc_buf_info")
-    local rc = C.ioctl(self.fd, self.ebc_cmd_get_buffer, info)
+    local lib = self.ebc_helper
+    local rc
+    if lib then
+        rc = lib.nativeko_ebc_acquire(self.fd, info,
+            self.ebc_acquire_timeout_ms)
+    else
+        rc = C.ioctl(self.fd, self.ebc_cmd_get_buffer, info)
+    end
     if rc < 0 or info.offset == -1 then
-        self.debug("framebuffer_rk_ebc: GET_BUFFER failed")
-        return
+        local err = ffi.errno()
+        if lib and err == ETIMEDOUT then
+            self:_vendorWedge("GET_BUFFER timeout")
+        else
+            self.debug("framebuffer_rk_ebc: GET_BUFFER failed errno=" .. err)
+        end
+        return false
     end
     local off = tonumber(info.offset)
     local need = self.ebc_stride * self.ebc_height
     if off < 0 or off + need > self.map_len then
         self.debug("framebuffer_rk_ebc: bad buffer offset", off)
-        return
+        return false
     end
     local dst = ffi.cast("uint8_t*", self.data) + off
     self:_vendorConvert(dst)
@@ -312,9 +380,62 @@ function framebuffer:_vendorPost(mode)
     info.win_y1 = 0
     info.win_x2 = info.width > 0 and info.width or self.ebc_width
     info.win_y2 = info.height > 0 and info.height or self.ebc_height
-    rc = C.ioctl(self.fd, self.ebc_cmd_send_buffer, info)
+    if lib then
+        rc = lib.nativeko_ebc_send(self.fd, info)
+    else
+        rc = C.ioctl(self.fd, self.ebc_cmd_send_buffer, info)
+    end
     if rc < 0 then
         self.debug("framebuffer_rk_ebc: SEND_BUFFER failed")
+        self:_vendorWedge("SEND_BUFFER failed")
+        return false
+    end
+
+    -- The HWC polls EBC status before reusing the buffer.  Do the same with
+    -- a bound; a timeout here means the frame did not complete and the next
+    -- GET_BUFFER would block.
+    if lib then
+        local st, err = self:_vendorStatus(self.ebc_status_timeout_ms)
+        if not st and err == ETIMEDOUT then
+            self:_vendorWedge("GET_STATUS timeout")
+            return false
+        end
+    end
+    return true
+end
+
+-- Re-arm the vendor EBC after mem resume.  The controller can come back with
+-- draw mode off or a stale buffer queue; without this the first frame often
+-- times out.  Reset the wedge flag so a recovered controller can be used
+-- again.
+function framebuffer:_vendorResume()
+    self._ebc_wedged = false
+    self._ebc_wedge_logged = false
+    local lib = self.ebc_helper
+    local rc
+    if lib then
+        rc = lib.nativeko_ebc_draw_enable(self.fd)
+    else
+        rc = C.ioctl(self.fd, self.ebc_cmd_draw_enable, nil)
+    end
+    if rc < 0 then
+        self:_vendorWedge("resume DRAW_ENABLE failed")
+        return false
+    end
+    if lib then
+        local st, err = self:_vendorStatus(500)
+        if not st and err == ETIMEDOUT then
+            self:_vendorWedge("resume GET_STATUS timeout")
+            return false
+        end
+    end
+    self.debug("framebuffer_rk_ebc: EBC resumed")
+    return true
+end
+
+function framebuffer:onResume()
+    if self.ebc_vendor_post and self.fd and self.fd >= 0 then
+        return self:_vendorResume()
     end
 end
 
@@ -492,7 +613,11 @@ end
 
 function framebuffer:close()
     if self.ebc_vendor_post and self.fd and self.fd >= 0 then
-        C.ioctl(self.fd, self.ebc_cmd_draw_stop, nil)
+        if self.ebc_helper then
+            self.ebc_helper.nativeko_ebc_draw_stop(self.fd)
+        else
+            C.ioctl(self.fd, self.ebc_cmd_draw_stop, nil)
+        end
     end
     if self.bb then
         self.bb:free()

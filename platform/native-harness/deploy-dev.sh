@@ -13,7 +13,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-ROOT="$(cd ../.. && pwd)"
+ROOT="$(cd ../../.. && pwd)"
 ADB="${ADB:-adb}"
 TMP=/data/local/tmp/nativeko
 MODULE="${KO_MODULE:-/data/data/org.koreader.launcher/files}"
@@ -36,6 +36,9 @@ $ADB push koreader-native "$TMP/koreader-native" >/dev/null
 $ADB push detach "$TMP/detach" >/dev/null
 if [ -f libnativeko-dns.so ]; then
     $ADB push libnativeko-dns.so "$TMP/libnativeko-dns.so" >/dev/null
+fi
+if [ -f libnativeko-ebc.so ]; then
+    $ADB push libnativeko-ebc.so "$TMP/libnativeko-ebc.so" >/dev/null
 fi
 
 # Generic session core + host/wifi drivers + generated profile.
