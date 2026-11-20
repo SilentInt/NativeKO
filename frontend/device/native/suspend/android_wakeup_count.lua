@@ -43,6 +43,30 @@ local function read_file(path)
     return v
 end
 
+local function read_all(path)
+    local f = io.open(path, "r")
+    if not f then return nil end
+    local v = f:read("*a")
+    f:close()
+    return v
+end
+
+local function log_wakeup_sources(tag)
+    local text = read_all("/sys/kernel/debug/wakeup_sources")
+    if not text then return end
+    for line in text:gmatch("[^\n]+") do
+        if line:match("^rk808%-rtc")
+            or line:match("^alarmtimer")
+            or line:match("^rk29%-keypad")
+            or line:match("^wlan_")
+            or line:match("^usb")
+            or line:match("^ac")
+        then
+            log(tag .. " " .. line)
+        end
+    end
+end
+
 local function write_sysfs(path, value)
     if not path or path == "" then return false end
     return ffiUtil.writeToSysfs(tostring(value), path)
@@ -162,6 +186,8 @@ function M.suspend(device, pw, disp, net)
     end
     log("wake_lock before mem: "
         .. (read_file("/sys/power/wake_lock") or ""))
+    log("rtc before mem: " .. (read_file(pw.rtc_alarm or "") or ""))
+    log_wakeup_sources("before mem")
     log("request " .. (pw.suspend_state or "mem"))
 
     local state = suspend_state(pw)
@@ -171,6 +197,8 @@ function M.suspend(device, pw, disp, net)
     if lock and lock ~= "" then
         write_sysfs("/sys/power/wake_lock", lock)
     end
+    log("rtc after wake: " .. (read_file(pw.rtc_alarm or "") or ""))
+    log_wakeup_sources("after wake")
     clear_alarm(pw)
     if state then
         log("resumed state=" .. tostring(state))
