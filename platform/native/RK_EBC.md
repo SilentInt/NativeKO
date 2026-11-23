@@ -5,10 +5,11 @@
 RK29/RK30/RK3288 设备都可以按同样步骤探测、标定并接入 NativeKO。
 
 已验证参考机型：
-- **Onyx NoteS / 超星 NoteSL**（RK3288，Android 6.0.1，kernel 3.10）；
+- **Onyx NoteS / 文石 NoteSL**（RK3288，Android 6.0.1，kernel 3.10）；
 - **博阅 Likebook Alita（K103）**（RK3368，Android 8.1，kernel 4.4；8bpp +
   5-bit 灰度、原厂 gamma LUT）。K103 的完整记录见
-  [`K103_ALITA.md`](K103_ALITA.md)；K103 与 NoteSL 是不同设备。
+  [`K103_ALITA.md`](K103_ALITA.md)，NoteSL 的休眠/Wi-Fi 记录见
+  [`NOTE_SL.md`](NOTE_SL.md)；K103 与 NoteSL 是不同设备。
 
 ---
 
@@ -16,7 +17,7 @@ RK29/RK30/RK3288 设备都可以按同样步骤探测、标定并接入 NativeKO
 
 | 项目 | 值 |
 |---|---|
-| 设备 | Onyx NoteS / 超星 SP_NoteSL（系统为 NoteS 6199） |
+| 设备 | Onyx NoteS / 文石 SP_NoteSL（系统为 NoteS 6199） |
 | SoC | Rockchip RK3288 |
 | CPU | 4× ARM Cortex-A17（ARMv7，`CPU part 0xc0d`，NEON/VFPv4） |
 | 内核 | `Linux 3.10.0 #1 SMP PREEMPT Mon Nov 2 16:45:12 CST 2020` |

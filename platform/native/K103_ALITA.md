@@ -1,7 +1,7 @@
 # K103 / Likebook Alita 适配记录
 
 设备：博阅 Likebook Alita（`ro.product.model=Likebook-K103`，`ro.product.device=K103`，
-`ro.product.brand=Boyue`）。K103 是博阅 Alita，**不是** Onyx/超星 NoteSL；
+`ro.product.brand=Boyue`）。K103 是博阅 Alita，**不是** Onyx/文石 NoteSL；
 NoteSL 是另一台 RK3288、1200×825 的设备（`profiles/notesl`）。
 
 本文记录 NativeKO 在这台机器上的完整适配过程、已验证结论和踩坑经验，供其他
@@ -337,11 +337,13 @@ ADB=/mnt/c/tools/android-sdk/platform-tools/adb.exe \
   - vendor gamma/GET_BUFFER/模式映射只在 alita profile 打开；
   - `refreshScreensaver` 只在 `ebc_screensaver_mode=true` 时由 Device 调用，
     notesl 不设置。
-- `notesl` profile 未改；`t65a` profile 保持 `power.model="none"`，
-  screensaver-only。T65A 的 early-suspend 驱动仍保留在仓库里，但未启用，
-  等实机复测后再打开。
+- `notesl` profile 已按 NoteSL 实机更新：不再 `suspend_unbind` SDIO host，
+  `wifi_keep_on_suspend=true`，避免 bcmdhd 在 `sdioh_remove`/`sdio_reset_comm`
+  中 panic；详见 [`NOTE_SL.md`](NOTE_SL.md)。`t65a` profile 保持
+  `power.model="none"`，screensaver-only；T65A 的 early-suspend 驱动仍保留在
+  仓库里，但未启用，等实机复测后再打开。
 - 电源状态机（`Device:suspend/onPowerEvent`）是**所有 native 设备共用**的
-  重写：driver 返回后由 Device 主动恢复 UI。NoteSL 的 suspend 行为需要
-  在 NoteSL 实机上做一次回归测试（显示后端不受影响）。
+  重写：driver 返回后由 Device 主动恢复 UI。NoteSL 已完成实机 suspend/resume
+  回归（Wi-Fi 保持方案）；显示后端不受影响。
 - DNS shim 只在 profile 配置了 `network.dns` 时预加载；`udhcpc` 只在
   `dhcp_kind="udhcpc"` 时启用；双色温只在 `frontlight_warm` 存在时启用。

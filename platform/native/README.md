@@ -10,12 +10,14 @@ behaviour and troubleshooting), see
 To port the framework to another device, see
 [`PORTING.md`](PORTING.md) (Chinese).
 
-This directory is the **generic framework**.  The NoteS/NoteSL profile
-(`profiles/notesl`, Onyx EBC) and the T65A profile (`profiles/t65a`, i.MX6
-mxcfb) are the reference examples, together with the Android host/Wi-Fi
-drivers and the APK packaging in `platform/android/nativeko`.  Porting to
-another device normally means replacing the profile and, if needed, the
-display backend / host driver / Wi-Fi driver.
+This directory is the **generic framework**.  The Alita K103 profile
+(`profiles/alita`, RK3368 EBC), the Onyx/文石 NoteS/NoteSL profile
+(`profiles/notesl`, Onyx EBC; see [`NOTE_SL.md`](NOTE_SL.md)) and the T65A
+profile (`profiles/t65a`, i.MX6 mxcfb) are the reference examples, together
+with the Android host/Wi-Fi drivers and the APK packaging in
+`platform/android/nativeko`.  Porting to another device normally means
+replacing the profile and, if needed, the display backend / host driver /
+Wi-Fi driver.
 
 
 ```
@@ -41,7 +43,7 @@ native/
   run-native.sh              compatibility wrapper -> session.sh
   restore-android.sh         wrapper -> session.sh restore
   drivers/host/*.sh          android_init, none (service manager)
-  drivers/pm/*.sh            none (NativeKO ships only the no-op PM model)
+  drivers/pm/*.sh            android_wakeup_count, none
   drivers/wifi/*.sh          wpa_supplicant_android
   profiles/<id>/profile.env  generated
   profiles/<id>/profile.lua  generated
@@ -66,9 +68,9 @@ User data (settings, plugins, patches) lives outside the program tree, at
    `drivers/wifi/<network.backend>.sh`.
 3. Recover a stale `session.journal` (a previous session that skipped its trap).
 4. `host_pre_start` (stop framework services), prepare the framebuffer,
-   save + set the CPU governor, and bring Wi-Fi up **only if**
-   `network.start_on_boot` is true (NativeKO sets it to false; Wi-Fi is then
-   controlled from KOReader's network menu).
+   save + set the CPU governor, and, when `network.start_on_boot` is true,
+   start `wifi_up` in the background.  Both Alita and NoteSL enable it;
+   startup does not block KOReader on a missing carrier or DHCP.
 5. `exec koreader-native` from `KO_HOME`.
 6. On exit (0/2/15): restore governor, Wi-Fi, framebuffer and host services;
    remove the journal.
@@ -81,9 +83,10 @@ without touching anything; `--no-stop` keeps the Android framework running.
 
 Reference profiles: `profiles/alita/profile.json` (Likebook Alita K103,
 RK3368, direct `/dev/ebc` with 8bpp 5-bit codes, dual frontlight; see
-[`K103_ALITA.md`](K103_ALITA.md)), `profiles/notesl/profile.json` (Onyx NoteS /
-超星 NoteSL, RK3288 EBC) and `profiles/t65a/profile.json` (Likebook T65A,
-i.MX6 mxcfb).  K103 and NoteSL are different devices.  Main sections:
+[`K103_ALITA.md`](K103_ALITA.md)), `profiles/notesl/profile.json` (Onyx/文石
+NoteS/NoteSL, RK3288 EBC; see [`NOTE_SL.md`](NOTE_SL.md)) and
+`profiles/t65a/profile.json` (Likebook T65A, i.MX6 mxcfb).  K103 and NoteSL
+are different devices.  Main sections:
 
 - `display`: framebuffer node/backend/rotation/portrait/dpi, pan and blank
   nodes.  `backend` selects the display module:
@@ -101,14 +104,19 @@ i.MX6 mxcfb).  K103 and NoteSL are different devices.  Main sections:
   `model: "android_wakeup_count"` selects the wakelock/`mem` driver;
   `none` is screensaver-only.  The driver also reads `suspend_state`,
   `suspend_fallback`, `suspend_wait_timeout`, `suspend_unbind`,
-  `wake_lock_name`, `wake_unlock` and `rtc_alarm` (stale alarms are cleared).
+  `wake_lock_name`, `wake_unlock`, `rtc_alarm` (stale alarms are cleared),
+  `wifi_keep_on_suspend` (keep the radio/interface powered across suspend),
+  and the profile-gated `suspend_unload` (unbind SDIO/bcmdhd; **not** used on
+  NoteSL because that driver panics).
 - `network`: interface, supplicant control dir and optional full
   `ctrl_interface` path, global-socket flags (`wpa_global`/`wpa_ifname`), init
   service and its `service_prop` (for status), DHCP command/flags or
   `dhcp_kind: "udhcpc"` + `dhcp_busybox`, optional `dns` servers (enables the
   `LD_PRELOAD` resolver shim), `selinux_allow` rules (applied by `wifi_up`),
-  optional in-kernel driver module, Android property integration, and
-  `start_on_boot` (false for NativeKO).
+  optional in-kernel driver module, Android property integration,
+  `start_on_boot` (true for Alita/NoteSL; startup runs `wifi_up` in the
+  background), and `suspend_unload` (SDIO/bcmdhd unload; NoteSL keeps it
+  disabled).
 - `host`: backend name, services to stop/start, governor policy.
 - `tools`: paths for `ip`, `ping`, `setsid`, `getprop`, `busybox` (Android
   profiles point at `/system/bin/...`; desktop Linux profiles can omit them).
@@ -163,17 +171,21 @@ wakelock/wakeup_count model on this RK3288 kernel (no legacy
 
 - the session takes a `nativeko-<pid>` wake lock while KOReader owns the
   screen; `pm_start` / `pm_stop` release stale framework/session locks;
-- the power key shows the screensaver, force-repaints, turns Wi-Fi off and
-  dims the frontlight, then (after `suspend_wait_timeout`) the suspend driver
-  stops Wi-Fi, clears stale RTC alarms, releases non-session lock and writes
+- the power key shows the screensaver and dims the frontlight; unless
+  `wifi_keep_on_suspend` is true, it also disables Wi-Fi before sleeping;
+- after `suspend_wait_timeout`, the driver optionally runs `wifi-suspend`
+  (and `suspend_unload` if the profile explicitly asks for SDIO/bcmdhd
+  unload), clears stale RTC alarms, releases non-session locks and writes
   `mem` to `/sys/power/state`;
-- the state write blocks until wakeup; on wake the driver re-binds any
-  `suspend_unbind` devices (e.g. NoteSL's unused mmc1 SD controller, whose
-  resume timeouts otherwise cost ~10s), re-takes the session lock and the UI
-  closes the screensaver with a full repaint;
-- `canSuspend = yes` when the profile selects a suspend model; the resume
-  busy-state ignores further power keys until the repaint completes, so rapid
-  presses do not queue additional suspends;
+- the state write blocks until wakeup; on wake the driver re-takes the
+  session lock and the UI closes the screensaver with a full repaint.
+  `suspend_unbind` devices are restored only when a profile declares them.
+  **NoteSL must not unbind its SDIO host/SDIO functions**: its built-in
+  bcmdhd panics in `sdioh_remove` and in `sdio_reset_comm` on reopen, so it
+  uses `wifi_keep_on_suspend=true` instead (see [`NOTE_SL.md`](NOTE_SL.md));
+- `canSuspend = yes` when the profile selects a suspend model; the explicit
+  `resuming` state and 1.5 s post-resume debounce ignore the replayed wake
+  key without a general key-lockout window;
 - `canPowerOff = yes`; `Device:powerOff()` runs `sync` then
   `/system/bin/reboot -p`, with `setprop sys.powerctl shutdown` as fallback.
 
@@ -211,13 +223,25 @@ Some Android 6 ROMs expose **only a global supplicant socket** from init
 The native backend then sets `WpaClient.ifname`, and every
 interface-specific control command is prefixed with `IFNAME=wlan0 `.
 
+On both Alita and NoteSL, `start_on_boot` is true: `session.sh` runs
+`wifi_up` in the background so KOReader is not blocked by a missing carrier
+or DHCP.  A successful native `authenticateNetwork` also issues
+`SAVE_CONFIG`, persisting the network in `wpa_supplicant.conf`; subsequent
+startup/resume restores it with a non-interactive
+`reconnectOrShowNetworkMenu(nil, false)` and `scheduleConnectivityCheck()`.
+`wifi_up` is idempotent: an already-running supplicant is not restarted on
+resume.  NoteSL keeps the radio powered across `mem`
+(`wifi_keep_on_suspend=true`) because unloading/unbinding its bcmdhd/SDIO
+stack panics; see [`NOTE_SL.md`](NOTE_SL.md).
+
 The ROM's dhcpcd may not set the `dhcp.<iface>.{gateway,dns1}` properties
 (the hook scripts can fail under a mismatched system/kernel).  The Wi-Fi
 driver therefore falls back to deriving the gateway from the interface
 address's `.1` (then the ARP table) and uses it for the default route and
-`net.dns1`.  Internet IP connectivity works in that mode; **hostname
-resolution requires netd/framework DNS configuration**, which is outside the
-framework-off session.  Do not rely on `ndc` from the session.
+`net.dns1`.  K103 additionally sets `network.dns` and uses the
+`LD_PRELOAD` resolver shim, so hostname resolution works with the framework
+stopped.  Profiles without `dns` (e.g. NoteSL) may still need
+netd/framework DNS for hostnames; do not rely on `ndc` from the session.
 
 ## Adding a device
 
@@ -236,7 +260,7 @@ framework-off session.  Do not rely on `ndc` from the session.
    `wifi_up`/`wifi_down`/`wifi_dhcp`/`wifi_release`.
 5. If the power model differs, add `drivers/pm/<name>.sh` and
    `frontend/device/native/suspend/<name>.lua` and set `power.model`.
-   NativeKO does not use this hook (`model: "none"`).
+   Alita/NoteSL use `android_wakeup_count`; T65A uses `none`.
 6. `python3 tools/profilegen.py profiles/<id>/profile.json <out>` and run
    `session.sh --profile <id> --dry-run` on the device.
 

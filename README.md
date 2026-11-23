@@ -8,19 +8,38 @@ NativeKO 不是给某一台设备写死的 App：核心是一套 profile/driver 
 
 - **博阅 Likebook Alita（K103）**：RK3368、Android 8.1、1872×1404 EBC
   直显（8bpp + 5-bit 灰度）、双色温前光、硬件 suspend、原生 Wi-Fi/DNS；
-- **Onyx NoteS / 超星 NoteSL**：RK3288、1200×825 EBC 直显、硬件 suspend；
-  注意 K103 与 NoteSL 是两台不同设备；
+- **Onyx NoteS / 文石 NoteSL**：RK3288、1200×825 EBC 直显、硬件 suspend；
+  Wi-Fi 跨 suspend 保持电源（避免 bcmdhd/SDIO resume panic）；注意 K103 与
+  NoteSL 是两台不同设备；
 - **Likebook T65A**：i.MX6 EPDC，screensaver-only 示例。
 
 你可以保留框架，替换 profile 和少量平台驱动，把它移植到其他电子墨水设备；
 具体步骤见 [`platform/native/PORTING.md`](platform/native/PORTING.md)，
 Rockchip EBC 设备另见 [`platform/native/RK_EBC.md`](platform/native/RK_EBC.md)；
 K103/Alita 的完整适配记录见
-[`platform/native/K103_ALITA.md`](platform/native/K103_ALITA.md)。
+[`platform/native/K103_ALITA.md`](platform/native/K103_ALITA.md)；
+NoteSL 的休眠/Wi-Fi 结论见
+[`platform/native/NOTE_SL.md`](platform/native/NOTE_SL.md)。
 
 English one-liner: a profile/driver-based porting framework for running
 KOReader natively on e-ink devices, shipping Rockchip EBC references
 (Likebook Alita K103 / NoteSL) and a Likebook T65A example.
+
+### 文档索引
+
+- [`platform/native/README.md`](platform/native/README.md)：框架、profile 字段、
+  session/PM/Wi-Fi 生命周期；
+- [`platform/native/PORTING.md`](platform/native/PORTING.md)：新设备移植步骤；
+- [`platform/native/RK_EBC.md`](platform/native/RK_EBC.md)：Rockchip EBC
+  直显协议与校准；
+- [`platform/native/K103_ALITA.md`](platform/native/K103_ALITA.md)：博阅
+  Alita K103 适配记录；
+- [`platform/native/NOTE_SL.md`](platform/native/NOTE_SL.md)：Onyx/文石
+  NoteSL 休眠与 Wi-Fi 记录；
+- [`platform/android/nativeko/README.md`](platform/android/nativeko/README.md)：
+  APK 构建、安装和排障；
+- [`platform/native-harness/README.md`](platform/native-harness/README.md)：
+  native launcher / 输入模块。
 
 ---
 
@@ -73,7 +92,8 @@ KOReader natively on e-ink devices, shipping Rockchip EBC references
   wpa_supplicant + `udhcpc` + DNS shim；
 - **NoteSL**：`platform/native/profiles/notesl/profile.json`，Rockchip EBC
   直显（`/dev/ebc`，1200×825，32bpp）、触摸交换/镜像 quirk、
-  `android_wakeup_count` 硬件 suspend、mmc1 unbind；
+  `android_wakeup_count` 硬件 suspend；**不解绑 SDIO、不卸载 bcmdhd**，
+  `wifi_keep_on_suspend=true`，避免 resume 时 `dhd_open` panic；
 - **T65A**：`platform/native/profiles/t65a/profile.json`，i.MX6 EPDC，
   `power.model = "none"`，screensaver-only。
 
@@ -97,12 +117,13 @@ KOReader natively on e-ink devices, shipping Rockchip EBC references
 - **真实硬件 suspend**：电源键屏保后写 `mem` 进入 suspend，再按电源键唤醒
   并重绘；session wake lock、旧 framework 锁清理、RTC 旧 alarm 清理都已
   处理；K103 还会停掉残留的 `zygote_secondary`/`boyuedrawserver`/
-  `hwcomposer`，NoteSL 额外处理 mmc1 unbind；
+  `hwcomposer`；NoteSL 则保持 Wi-Fi/SDIO 供电，避开驱动 resume panic；
 - **前光**：K103 支持冷/暖双色温（两个 `rk28_bl*` 节点）；屏保时降到底，
   唤醒恢复；
-- **Wi-Fi/DNS**：启动时默认不自动开 Wi-Fi；K103 使用 ROM 的
+- **Wi-Fi/DNS**：Alita/NoteSL 启动时后台自动打开 Wi-Fi；K103 使用 ROM 的
   `wpa_supplicant` + busybox `udhcpc`，并用 `LD_PRELOAD` DNS shim 在 framework
-  停止时解析域名；
+  停止时解析域名；NoteSL 使用全局 supplicant socket + `dhcpcd`，保存网络后
+  自动重连；
 - **关机选项**：KOReader 退出菜单里的 Power off 会执行 `sync` +
   `/system/bin/reboot -p`；
 - **稳定切换**：suspend/resume 进行中忽略新的电源键事件，避免连按导致

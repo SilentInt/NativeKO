@@ -4,10 +4,12 @@
 另一台设备。默认目标是 Android 电子墨水设备；非 Android Linux 设备的差异
 会在对应章节标注。
 
-本仓库有两个参考 profile：
+本仓库有三个参考 profile：
 
-- `notesl`（Onyx NoteS / 超星 NoteSL）：直接控制 Rockchip EBC，并实现
-  Android 6 的 `android_wakeup_count` 硬件 suspend；
+- `alita`（博阅 Likebook Alita K103）：RK3368 EBC、硬件 suspend、双色温前光；
+- `notesl`（Onyx/文石 NoteS/NoteSL）：直接控制 Rockchip EBC，并实现
+  Android 6 的 `android_wakeup_count` 硬件 suspend；其 Wi-Fi/SDIO 驱动有
+  resume panic，详见 [`NOTE_SL.md`](NOTE_SL.md)；
 - `t65a`（Likebook T65A）：i.MX6 EPDC，`power.model = "none"`，
   screensaver-only，只保留屏保、前光、Wi-Fi 控制和关机。
 
@@ -279,11 +281,14 @@ Android 参考 `drivers/wifi/wpa_supplicant_android.sh`：
 - `isWifiOn()` 读取 `network.service_prop`，所以 supplicant 状态要真实；
 - 某些 ROM 的 `dhcpcd` 不写 `dhcp.<iface>.gateway/dns1` 属性；Wi-Fi 驱动
   会从接口地址的 `.1`、再退到 ARP 表推断网关，并设置默认路由和
-  `net.dns1`。这样 IP 连通性可用；**域名解析仍需要 netd/framework 的 DNS
-  配置**，框架停止后不要依赖 `ndc` 之类平台工具；
-- `network.start_on_boot: false` 可以避免一启动就开 Wi-Fi；
+  `net.dns1`。K103 另外通过 `network.dns` + `LD_PRELOAD` resolver shim
+  解决框架停止后的域名解析；没有 shim 的 profile 仍需要 netd/framework
+  的 DNS 配置，框架停止后不要依赖 `ndc` 之类平台工具；
+- `network.start_on_boot: true` 会在后台执行 `wifi_up`（Alita/NoteSL 都
+  启用）；不阻塞 KOReader，启动后自动重连保存的网络；
 - 屏保显示时是否关闭 Wi-Fi、退出时是否恢复，由
-  `frontend/device/native/device.lua` 的 `onPowerEvent()` 决定。
+  `frontend/device/native/device.lua` 的 `onPowerEvent()` 决定；
+  `power.wifi_keep_on_suspend=true` 时保留射频（NoteSL 必须这样做）。
 
 非 Android 设备可写一个新的 backend（NetworkManager/connman/wpa_cli），
 实现同样的 `wifi_up`/`wifi_down`/`wifi_dhcp`/`wifi_release`。
@@ -302,16 +307,19 @@ Android 参考 `drivers/wifi/wpa_supplicant_android.sh`：
 `frontend/device/native/device.lua` 的 `Device:onPowerEvent()` 同时处理
 屏保和（如果 profile 选择了 PM model）硬件 suspend：
 
-- 第一次电源键：`Screensaver:setup()/show()`、force repaint、关闭 Wi-Fi、
-  `PowerD:beforeSuspend()`，然后 `rescheduleSuspend()` 在
-  `suspend_wait_timeout` 后调用 `Device:suspend()`；
-- suspend driver 释放 session wake lock、停 Wi-Fi、清旧 RTC alarm、
-  unbind `suspend_unbind` 设备，写 `mem`；写操作阻塞到唤醒；
-- 唤醒后重新 bind、拿回 session lock；电源键关闭屏保、恢复前光和 Wi-Fi，
-  并强制全刷；
+- 第一次电源键：`Screensaver:setup()/show()`、force repaint；除非
+  `wifi_keep_on_suspend=true`，否则关闭 Wi-Fi；`PowerD:beforeSuspend()`，
+  然后 `rescheduleSuspend()` 在 `suspend_wait_timeout` 后调用
+  `Device:suspend()`；
+- suspend driver 释放 session wake lock、按 profile 停 Wi-Fi/可选 unload/
+  unbind、清旧 RTC alarm，写 `mem`；写操作阻塞到唤醒；
+- 唤醒后重新拿回 session lock；`Device:_resumeUI()` 关闭屏保、恢复前光和
+  Wi-Fi，并强制全刷。NoteSL 不要解绑 SDIO/卸载 bcmdhd，使用
+  `wifi_keep_on_suspend=true` 避开 `dhd_open`/`sdioh_remove` panic；
 - `ScreenSaverWidget.onTap = function() end`：触摸不关闭屏保；
-- `_suspend_in_progress` / `_resume_in_progress` 为真时忽略新的
-  Power/Suspend 事件，busy 状态持续到 resume 全刷完成，避免连按排队；
+- 状态机为 `awake -> screensaver -> suspending -> resuming -> awake`；
+  suspending/resuming 期间忽略 Power/Suspend，resume 后 1.5 秒防抖
+  丢弃唤醒键回声，避免连按排队或重新进屏保；
 - `canSuspend` 由 profile 的 `power.model` 决定；`none` 时是纯屏保；
 - `canPowerOff = yes`，`Device:powerOff()` 使用
   `sync` + `/system/bin/reboot -p`，失败回退 `sys.powerctl shutdown`。
@@ -379,14 +387,18 @@ NoteSL 已实现 Android 6 的 wakelock/`mem` 模型：profile
    - `pm_stop` 等 framework 拿回 `PowerManagerService` 锁后再释放 session
      锁，并清理泄漏的 session 锁；
 4. suspend driver：
-   - 停 Wi-Fi（`wifi-suspend`），清旧 RTC alarm；
+   - 按 profile 决定是否停 Wi-Fi：`wifi_keep_on_suspend=true` 时保留射频；
+     否则执行 `wifi-suspend`；清旧 RTC alarm；
    - 释放除 session 锁外的锁，最后释放 session 锁；
    - 写 `mem`；写操作返回即已 resume；重新拿 session 锁；
-   - 可选 `suspend_unbind`：休眠前 unbind、resume 后 bind 那些
-     resume 会超时的未装配硬件（NoteSL 的 mmc1 SD 控制器，省 ~10s）；
+   - 可选 `suspend_unbind`：仅用于那些**确认可以 unbind/rebind** 的设备；
+     **NoteSL 不要解绑 SDIO host/functions，也不要卸载 bcmdhd**，否则
+     `sdioh_remove`/`sdio_reset_comm` 会 kernel panic；NoteSL 使用
+     `wifi_keep_on_suspend=true`；
    - `rtc_alarm` 只用于**清除旧 alarm**，不设置唤醒 alarm；
-5. resume 后由 `onPowerEvent()` 关闭屏保、恢复 Wi-Fi/前光并全刷；
-   `_suspend_in_progress`/`_resume_in_progress` 期间忽略新的按键；
+5. resume 后由 `Device:_resumeUI()` 关闭屏保、恢复 Wi-Fi/前光并全刷；
+   显式状态机为 `suspending -> resuming -> awake`，resume 后 1.5 秒内忽略
+   Power 事件（不是通用按键锁定）；
 6. 调试阶段可手工 `echo devices > /sys/power/pm_test` 做 5 秒自动恢复的
    分段测试，然后 `echo none`；生产 profile 不需要 `pm_test`。
 
