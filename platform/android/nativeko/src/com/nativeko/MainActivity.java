@@ -34,7 +34,7 @@ public class MainActivity extends Activity {
     private static final String TAG = "NativeKO";
 
     /** Bump this whenever the embedded assets change. */
-    private static final String ASSET_VERSION = "33";
+    private static final String ASSET_VERSION = "37";
 
     private TextView status;
     private final Handler handler = new Handler();

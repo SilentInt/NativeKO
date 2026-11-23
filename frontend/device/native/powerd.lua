@@ -145,7 +145,9 @@ function PowerD:afterResume()
         self:setIntensityHW(self.fl_intensity)
         self.is_fl_on = true
     end
+    logger.info("device/native: powerd afterResume base begin")
     BasePowerD.afterResume(self)
+    logger.info("device/native: powerd afterResume base returned")
 end
 
 function PowerD:getCapacityHW()

@@ -570,6 +570,8 @@ end
 -- resume hook; closing a plain screensaver does not need it.
 function Device:_resumeUI(from_suspend)
     if self._power_state ~= "resuming" then return end
+    logger.info("device/native: resumeUI begin from_suspend="
+        .. tostring(from_suspend))
     -- Debounce the tail of a resume.  Closing the screensaver (including the
     -- canceled-before-suspend path) can leave a Power event queued; without
     -- this it can be treated as a fresh sleep request and re-enter the
@@ -579,24 +581,34 @@ function Device:_resumeUI(from_suspend)
     local Screensaver = require("ui/screensaver")
     UIManager:unschedule(self.suspend)
     if from_suspend then
+        logger.info("device/native: resumeUI driver resume begin")
         self:resume()
+        logger.info("device/native: resumeUI driver resume returned")
     end
     local function finish_resume()
         logger.info("device/native: resume UI finished")
         self:_setPowerState("awake")
     end
+    logger.info("device/native: resumeUI screensaver close begin")
     local widget_was_closed = Screensaver:close()
+    logger.info("device/native: resumeUI screensaver close returned "
+        .. tostring(widget_was_closed))
     if widget_was_closed and self:needsScreenRefreshAfterResume() then
+        logger.info("device/native: resumeUI full refresh scheduled")
         UIManager:scheduleIn(1, function()
+            logger.info("device/native: resumeUI full refresh begin")
             self.screen:refreshFull(0, 0,
                 self.screen:getWidth(), self.screen:getHeight())
+            logger.info("device/native: resumeUI full refresh returned")
             finish_resume()
         end)
     else
         -- Let the close repaint run once before accepting new power keys.
         UIManager:scheduleIn(0.1, finish_resume)
     end
+    logger.info("device/native: resumeUI afterResume begin")
     self.powerd:afterResume()
+    logger.info("device/native: resumeUI afterResume returned")
     if self._wifi_was_on_before_screensaver then
         local NetworkMgr = require("ui/network/manager")
         NetworkMgr:restoreWifiAsync()
@@ -606,6 +618,7 @@ function Device:_resumeUI(from_suspend)
         NetworkMgr:scheduleConnectivityCheck()
         self._wifi_was_on_before_screensaver = false
     end
+    logger.info("device/native: resumeUI end")
 end
 
 function Device:rescheduleSuspend(delay)

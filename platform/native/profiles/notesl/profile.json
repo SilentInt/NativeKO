@@ -74,9 +74,7 @@
       "KeyEvents"
     ],
     "rtc_alarm": "/sys/class/rtc/rtc0/wakealarm",
-    "suspend_unbind": [
-      "dwmmc_rockchip:ff0d0000.rksdmmc"
-    ]
+    "wifi_keep_on_suspend": true
   },
   "network": {
     "manage": true,

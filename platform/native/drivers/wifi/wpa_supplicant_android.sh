@@ -207,18 +207,22 @@ wifi_unload() {
     [ -n "${NET_DRIVER_MODULE:-}" ] || return 0
 
     # dhd_stop is asynchronous; wait for the module refcount to drop.
-    i=0
-    while [ $i -lt 6 ]; do
-        [ -d "/sys/module/$NET_DRIVER_MODULE" ] || break
-        ref=$(cat "/sys/module/$NET_DRIVER_MODULE/refcnt" 2>/dev/null)
-        [ "$ref" = "0" ] && break
-        sleep 1
-        i=$((i+1))
-    done
-    if [ -d "/sys/module/$NET_DRIVER_MODULE" ]; then
-        # The toolbox rmmod works; busybox rmmod silently fails on this ROM.
-        /system/bin/rmmod "$NET_DRIVER_MODULE" 2>/dev/null || \
-            rmmod "$NET_DRIVER_MODULE" 2>/dev/null
+    # Built-in bcmdhd has a /sys/module entry but no refcnt; skip the
+    # pointless wait and rmmod in that case.
+    if [ -e "/sys/module/$NET_DRIVER_MODULE/refcnt" ]; then
+        i=0
+        while [ $i -lt 6 ]; do
+            [ -d "/sys/module/$NET_DRIVER_MODULE" ] || break
+            ref=$(cat "/sys/module/$NET_DRIVER_MODULE/refcnt" 2>/dev/null)
+            [ "$ref" = "0" ] && break
+            sleep 1
+            i=$((i+1))
+        done
+        if [ -d "/sys/module/$NET_DRIVER_MODULE" ]; then
+            # The toolbox rmmod works; busybox rmmod silently fails on this ROM.
+            /system/bin/rmmod "$NET_DRIVER_MODULE" 2>/dev/null || \
+                rmmod "$NET_DRIVER_MODULE" 2>/dev/null
+        fi
     fi
 
     # rmmod can still fail on some builds; unbind the SDIO glue as fallback
@@ -242,12 +246,14 @@ wifi_unload() {
 
 wifi_suspend() {
     # Android's "turn Wi-Fi off while asleep" path: stop the supplicant and
-    # bring the interface down. The netdev stop runs bcmdhd's dhd_stop ->
-    # wl_android_wifi_off -> bcmsdh_oob_intr_unregister, which removes the
-    # OOB host-wake IRQ before the kernel is asked to suspend. Keep the
-    # module and SDIO host loaded: rmmod/unbind re-probes the card and
-    # re-arms the OOB/board wake.
+    # bring the interface down.  Profiles with a fragile SDIO/bcmdhd stack
+    # can additionally unbind the SDIO functions and host controller so the
+    # driver is re-probed cleanly on resume instead of calling dhd_open on a
+    # stale card state.
     wifi_down
+    if [ "${NET_SUSPEND_UNLOAD:-0}" = "1" ]; then
+        wifi_unload
+    fi
     # Give the supplicant teardown and the IRQ free a moment to land.
     sleep 1
 }

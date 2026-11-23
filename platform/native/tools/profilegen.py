@@ -143,6 +143,7 @@ def main():
         "NET_ANDROID_PROPS": "1" if net.get("android_props") else "0",
         "NET_SDIO_HOST_DRIVER": net.get("sdio_host_driver", ""),
         "NET_SDIO_HOST_DEVICE": net.get("sdio_host_device", ""),
+        "NET_SUSPEND_UNLOAD": "1" if net.get("suspend_unload") else "0",
 
         "HOST_BACKEND": host.get("backend", "none"),
         "HOST_STOP_SERVICES": join_list(host.get("stop", [])),
