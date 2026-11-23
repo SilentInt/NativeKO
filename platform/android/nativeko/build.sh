@@ -68,6 +68,10 @@ $ADB shell "su -c '
       for f in libkoreader-monolibtic.so libluajit.so libsdcv.so libioctl.so; do
           [ -f \"\$LIBDIR/\$f\" ] && cp -a \"\$LIBDIR/\$f\" /data/local/tmp/nativeko-stage/libs/
       done
+      # Some NoteS/NativeKO installs keep the libs only in the app ko tree.
+      if [ ! -e /data/local/tmp/nativeko-stage/libs/libkoreader-monolibtic.so ] && [ -d /data/data/com.nativeko/files/ko/libs ]; then
+          cp -a /data/data/com.nativeko/files/ko/libs/. /data/local/tmp/nativeko-stage/libs/
+      fi
   elif [ -d /data/data/com.nativeko/files/ko ]; then
       # Standalone NativeKO already carries the complete ko tree and libs.
       cp -a /data/data/com.nativeko/files/ko/. /data/local/tmp/nativeko-stage/ko/
@@ -76,11 +80,7 @@ $ADB shell "su -c '
       exit 1
   fi
   cd /data/local/tmp/nativeko-stage && \
-  if [ -d libs ] && [ -n \"\$(ls -A libs 2>/dev/null)\" ]; then \
-      tar cf /data/local/tmp/nativeko-stage.tar ko libs; \
-  else \
-      tar cf /data/local/tmp/nativeko-stage.tar ko; \
-  fi
+  tar cf /data/local/tmp/nativeko-stage.tar ko libs
   chmod 644 /data/local/tmp/nativeko-stage.tar
 '"
 $ADB pull /data/local/tmp/nativeko-stage.tar "$BUILD/stage.tar" >/dev/null
