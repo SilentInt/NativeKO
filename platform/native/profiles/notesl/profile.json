@@ -80,7 +80,7 @@
   },
   "network": {
     "manage": true,
-    "start_on_boot": false,
+    "start_on_boot": true,
     "iface": "wlan0",
     "backend": "wpa_supplicant_android",
     "ctrl_dir": "/dev/socket",
